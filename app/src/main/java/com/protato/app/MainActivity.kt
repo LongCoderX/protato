@@ -6,11 +6,13 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -67,9 +69,12 @@ import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -300,6 +305,19 @@ fun ProtatoApp() {
                         onDelete = { item ->
                             appState = appState.copy(todos = appState.todos.filterNot { it.id == item.id })
                             if (selectedTodoId == item.id) selectedTodoId = null
+                        },
+                        onUpdate = { updatedItem ->
+                            appState = appState.copy(
+                                todos = appState.todos.map { item ->
+                                    if (item.id == updatedItem.id) updatedItem else item
+                                }
+                            )
+                        },
+                        onDeleteMany = { itemIds ->
+                            appState = appState.copy(
+                                todos = appState.todos.filterNot { it.id in itemIds }
+                            )
+                            if (selectedTodoId in itemIds) selectedTodoId = null
                         }
                     )
 
@@ -640,64 +658,280 @@ private fun TodoScreen(
     todos: List<TodoItem>,
     onAdd: (String) -> Unit,
     onToggle: (TodoItem) -> Unit,
-    onDelete: (TodoItem) -> Unit
+    onDelete: (TodoItem) -> Unit,
+    onUpdate: (TodoItem) -> Unit,
+    onDeleteMany: (Set<String>) -> Unit
 ) {
     var title by rememberSaveable { mutableStateOf("") }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+    var editingTodo by remember { mutableStateOf<TodoItem?>(null) }
+    var selectedTodoIds by rememberSaveable { mutableStateOf(setOf<String>()) }
+    val selecting = selectedTodoIds.isNotEmpty()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp)
     ) {
-        item {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 20.dp, bottom = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             Header(title = "待办", subtitle = "给每一轮番茄一个明确的对象")
-        }
-        item {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it },
-                    modifier = Modifier.weight(1f),
-                    label = { Text("新待办") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
-                )
-                FilledIconButton(
-                    onClick = {
-                        if (title.isNotBlank()) {
-                            onAdd(title)
-                            title = ""
-                        }
+            if (selecting) {
+                TodoSelectionBar(
+                    selectedCount = selectedTodoIds.size,
+                    onCancel = { selectedTodoIds = emptySet() },
+                    onDelete = {
+                        onDeleteMany(selectedTodoIds)
+                        selectedTodoIds = emptySet()
                     }
+                )
+            } else {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Outlined.Add, contentDescription = "添加")
+                    OutlinedTextField(
+                        value = title,
+                        onValueChange = { title = it },
+                        modifier = Modifier.weight(1f),
+                        label = { Text("新待办") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
+                    )
+                    FilledIconButton(
+                        onClick = {
+                            if (title.isNotBlank()) {
+                                onAdd(title)
+                                title = ""
+                            }
+                        }
+                    ) {
+                        Icon(Icons.Outlined.Add, contentDescription = "添加")
+                    }
                 }
             }
         }
-        items(todos, key = { it.id }) { todo ->
-            TodoRow(todo = todo, onToggle = onToggle, onDelete = onDelete)
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            if (todos.isEmpty()) {
+                item {
+                    EmptyState("还没有待办，先添加一个明确的小目标。")
+                }
+            }
+            items(todos, key = { it.id }) { todo ->
+                TodoRow(
+                    todo = todo,
+                    selected = todo.id in selectedTodoIds,
+                    selecting = selecting,
+                    onToggle = { onToggle(todo) },
+                    onEdit = { editingTodo = todo },
+                    onDelete = { onDelete(todo) },
+                    onToggleSelected = {
+                        selectedTodoIds = selectedTodoIds.toggle(todo.id)
+                    },
+                    onLongPress = {
+                        selectedTodoIds = selectedTodoIds + todo.id
+                    }
+                )
+            }
+        }
+    }
+
+    editingTodo?.let { todo ->
+        TodoEditorDialog(
+            todo = todo,
+            onDismiss = { editingTodo = null },
+            onSave = { updatedTitle ->
+                onUpdate(todo.copy(title = updatedTitle))
+                editingTodo = null
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
+@Composable
+private fun TodoRow(
+    todo: TodoItem,
+    selected: Boolean,
+    selecting: Boolean,
+    onToggle: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onToggleSelected: () -> Unit,
+    onLongPress: () -> Unit
+) {
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            when (value) {
+                SwipeToDismissBoxValue.EndToStart -> onDelete()
+                SwipeToDismissBoxValue.StartToEnd -> onEdit()
+                SwipeToDismissBoxValue.Settled -> Unit
+            }
+            false
+        }
+    )
+
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromStartToEnd = !selecting,
+        enableDismissFromEndToStart = !selecting,
+        backgroundContent = {
+            TodoSwipeBackground(dismissValue = dismissState.targetValue)
+        }
+    ) {
+        ElevatedCard(
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    onClick = {
+                        if (selecting) onToggleSelected()
+                    },
+                    onLongClick = onLongPress
+                ),
+            colors = CardDefaults.elevatedCardColors(
+                containerColor = if (selected) {
+                    MaterialTheme.colorScheme.secondaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surface
+                }
+            )
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Checkbox(
+                    checked = if (selecting) selected else todo.completed,
+                    onCheckedChange = {
+                        if (selecting) onToggleSelected() else onToggle()
+                    }
+                )
+                Text(
+                    text = todo.title,
+                    modifier = Modifier.weight(1f),
+                    textDecoration = if (todo.completed) TextDecoration.LineThrough else TextDecoration.None,
+                    color = if (todo.completed) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    }
+                )
+            }
         }
     }
 }
 
 @Composable
-private fun TodoRow(todo: TodoItem, onToggle: (TodoItem) -> Unit, onDelete: (TodoItem) -> Unit) {
-    ElevatedCard(shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Checkbox(checked = todo.completed, onCheckedChange = { onToggle(todo) })
-            Text(
-                text = todo.title,
-                modifier = Modifier.weight(1f),
-                textDecoration = if (todo.completed) TextDecoration.LineThrough else TextDecoration.None,
-                color = if (todo.completed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+private fun TodoSwipeBackground(dismissValue: SwipeToDismissBoxValue) {
+    val deleting = dismissValue == SwipeToDismissBoxValue.EndToStart
+    val editing = dismissValue == SwipeToDismissBoxValue.StartToEnd
+    val backgroundColor = when {
+        deleting -> MaterialTheme.colorScheme.error
+        editing -> MaterialTheme.colorScheme.tertiary
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxSize()
+            .clip(RoundedCornerShape(8.dp))
+            .background(backgroundColor)
+            .padding(horizontal = 18.dp),
+        horizontalArrangement = if (deleting) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = if (deleting) Icons.Outlined.Delete else Icons.Outlined.Edit,
+            contentDescription = if (deleting) "删除待办" else "编辑待办",
+            tint = if (deleting || editing) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun TodoSelectionBar(
+    selectedCount: Int,
+    onCancel: () -> Unit,
+    onDelete: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        IconButton(onClick = onCancel) {
+            Icon(Icons.Outlined.Close, contentDescription = "退出多选")
+        }
+        Text(
+            text = "已选择 $selectedCount 项",
+            modifier = Modifier.weight(1f),
+            fontWeight = FontWeight.SemiBold
+        )
+        IconButton(onClick = onDelete) {
+            Icon(
+                Icons.Outlined.Delete,
+                contentDescription = "删除所选待办",
+                tint = MaterialTheme.colorScheme.error
             )
-            IconButton(onClick = { onDelete(todo) }) {
-                Icon(Icons.Outlined.Delete, contentDescription = "删除")
-            }
         }
     }
+}
+
+@Composable
+private fun TodoEditorDialog(
+    todo: TodoItem,
+    onDismiss: () -> Unit,
+    onSave: (String) -> Unit
+) {
+    var title by rememberSaveable(todo.id) { mutableStateOf(todo.title) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                enabled = title.isNotBlank(),
+                onClick = { onSave(title.trim()) }
+            ) {
+                Icon(Icons.Outlined.Save, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("保存修改")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+        title = { Text("编辑待办") },
+        text = {
+            OutlinedTextField(
+                value = title,
+                onValueChange = { title = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("待办内容") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
+            )
+        }
+    )
+}
+
+private fun Set<String>.toggle(itemId: String): Set<String> {
+    return if (itemId in this) this - itemId else this + itemId
 }
 
 @Composable
