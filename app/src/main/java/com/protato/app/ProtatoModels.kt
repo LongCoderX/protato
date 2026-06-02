@@ -75,10 +75,34 @@ data class LlmImportSettings(
     val apiKey: String = ""
 )
 
+data class LlmProviderSettings(
+    val id: String,
+    val providerKey: String,
+    val name: String,
+    val modelName: String = "",
+    val endpoint: String = "",
+    val apiKey: String = ""
+)
+
 data class EncouragerAgentSettings(
     val enabled: Boolean = false,
     val name: String = "鼓励师",
     val prompt: String = DEFAULT_ENCOURAGER_PROMPT
+)
+
+data class AgentDataPermissions(
+    val dailyRecords: Boolean = false,
+    val todos: Boolean = false,
+    val templates: Boolean = false
+)
+
+data class AgentSettings(
+    val id: String,
+    val enabled: Boolean = true,
+    val name: String = "鼓励师",
+    val providerId: String = "",
+    val prompt: String = DEFAULT_ENCOURAGER_PROMPT,
+    val permissions: AgentDataPermissions = AgentDataPermissions(dailyRecords = true)
 )
 
 data class AppState(
@@ -92,12 +116,33 @@ data class AppState(
     val pendingRecord: PendingPomodoroRecord? = null,
     val projectRevision: Int = 1,
     val nickname: String = DEFAULT_NICKNAME,
-    val llmImport: LlmImportSettings = LlmImportSettings(),
-    val encouragerAgent: EncouragerAgentSettings = EncouragerAgentSettings()
+    val llmProviders: List<LlmProviderSettings> = defaultLlmProviders(),
+    val agents: List<AgentSettings> = defaultAgents()
 )
 
 const val DEFAULT_NICKNAME = "专注者"
 const val DEFAULT_ENCOURAGER_PROMPT = "请称呼我为「{nickname}」，用温和、具体、不油腻的方式鼓励我继续完成下一轮番茄。"
+
+fun defaultLlmProviders(): List<LlmProviderSettings> {
+    return listOf(
+        LlmProviderSettings("provider-deepseek", "deepseek", "DeepSeek", endpoint = "https://api.deepseek.com"),
+        LlmProviderSettings("provider-minimax", "minimax", "MiniMax", endpoint = "https://api.minimax.io"),
+        LlmProviderSettings("provider-qwen", "qwen", "Qwen", endpoint = "https://dashscope.aliyuncs.com/compatible-mode"),
+        LlmProviderSettings("provider-openai", "openai", "OpenAI", endpoint = "https://api.openai.com"),
+        LlmProviderSettings("provider-claude-code", "claude_code", "Claude Code"),
+        LlmProviderSettings("provider-longcat", "longcat", "LongCat")
+    )
+}
+
+fun defaultAgents(): List<AgentSettings> {
+    return listOf(
+        AgentSettings(
+            id = "agent-encourager",
+            name = "鼓励师",
+            permissions = AgentDataPermissions(dailyRecords = true)
+        )
+    )
+}
 
 fun defaultTemplate(): RecordTemplate {
     return RecordTemplate(

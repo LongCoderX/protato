@@ -17,6 +17,10 @@ class ProtatoStore(context: Context) {
                 "selectedTemplateId",
                 templates.firstOrNull()?.id ?: defaultTemplate().id
             )
+            val legacyLlmImport = root.optJSONObject("llmImport")?.toLlmImportSettings()
+            val legacyEncouragerAgent = root.optJSONObject("encouragerAgent")?.toEncouragerAgentSettings()
+            val llmProviders = root.optJSONArray("llmProviders")?.toLlmProviders().orEmpty()
+            val agents = root.optJSONArray("agents")?.toAgents().orEmpty()
             AppState(
                 todos = root.optJSONArray("todos")?.toTodos().orEmpty(),
                 templates = templates.ifEmpty { listOf(defaultTemplate()) },
@@ -31,9 +35,12 @@ class ProtatoStore(context: Context) {
                 pendingRecord = root.optJSONObject("pendingRecord")?.toPendingRecord(),
                 projectRevision = root.optInt("projectRevision", 1).coerceAtLeast(1),
                 nickname = root.optString("nickname", DEFAULT_NICKNAME).ifBlank { DEFAULT_NICKNAME },
-                llmImport = root.optJSONObject("llmImport")?.toLlmImportSettings() ?: LlmImportSettings(),
-                encouragerAgent = root.optJSONObject("encouragerAgent")?.toEncouragerAgentSettings()
-                    ?: EncouragerAgentSettings()
+                llmProviders = llmProviders.ifEmpty {
+                    defaultLlmProviders().withLegacyLlmImport(legacyLlmImport)
+                },
+                agents = agents.ifEmpty {
+                    defaultAgents().withLegacyEncouragerAgent(legacyEncouragerAgent)
+                }
             )
         }.getOrElse { AppState() }
     }
@@ -50,8 +57,8 @@ class ProtatoStore(context: Context) {
             .put("pendingRecord", state.pendingRecord?.toJson() ?: JSONObject.NULL)
             .put("projectRevision", state.projectRevision)
             .put("nickname", state.nickname)
-            .put("llmImport", state.llmImport.toJson())
-            .put("encouragerAgent", state.encouragerAgent.toJson())
+            .put("llmProviders", state.llmProviders.toJsonArray { it.toJson() })
+            .put("agents", state.agents.toJsonArray { it.toJson() })
         file.writeText(root.toString(2))
     }
 }
@@ -145,6 +152,21 @@ private fun JSONObject.toLlmImportSettings(): LlmImportSettings {
     )
 }
 
+private fun JSONArray.toLlmProviders(): List<LlmProviderSettings> = mapObjects { item ->
+    item.toLlmProviderSettings()
+}.filter { it.id.isNotBlank() && it.name.isNotBlank() }
+
+private fun JSONObject.toLlmProviderSettings(): LlmProviderSettings {
+    return LlmProviderSettings(
+        id = optString("id"),
+        providerKey = optString("providerKey"),
+        name = optString("name"),
+        modelName = optString("modelName"),
+        endpoint = optString("endpoint"),
+        apiKey = optString("apiKey")
+    )
+}
+
 private fun JSONObject.toEncouragerAgentSettings(): EncouragerAgentSettings {
     return EncouragerAgentSettings(
         enabled = optBoolean("enabled"),
@@ -155,6 +177,28 @@ private fun JSONObject.toEncouragerAgentSettings(): EncouragerAgentSettings {
         ).ifBlank {
             DEFAULT_ENCOURAGER_PROMPT
         }
+    )
+}
+
+private fun JSONArray.toAgents(): List<AgentSettings> = mapObjects { item ->
+    AgentSettings(
+        id = item.optString("id"),
+        enabled = item.optBoolean("enabled", true),
+        name = item.optString("name", "Agent").ifBlank { "Agent" },
+        providerId = item.optString("providerId"),
+        prompt = item.optString("prompt", DEFAULT_ENCOURAGER_PROMPT).ifBlank {
+            DEFAULT_ENCOURAGER_PROMPT
+        },
+        permissions = item.optJSONObject("permissions")?.toAgentDataPermissions()
+            ?: AgentDataPermissions()
+    )
+}.filter { it.id.isNotBlank() && it.name.isNotBlank() }
+
+private fun JSONObject.toAgentDataPermissions(): AgentDataPermissions {
+    return AgentDataPermissions(
+        dailyRecords = optBoolean("dailyRecords"),
+        todos = optBoolean("todos"),
+        templates = optBoolean("templates")
     )
 }
 
@@ -215,10 +259,61 @@ private fun LlmImportSettings.toJson(): JSONObject = JSONObject()
     .put("endpoint", endpoint)
     .put("apiKey", apiKey)
 
+private fun LlmProviderSettings.toJson(): JSONObject = JSONObject()
+    .put("id", id)
+    .put("providerKey", providerKey)
+    .put("name", name)
+    .put("modelName", modelName)
+    .put("endpoint", endpoint)
+    .put("apiKey", apiKey)
+
 private fun EncouragerAgentSettings.toJson(): JSONObject = JSONObject()
     .put("enabled", enabled)
     .put("name", name)
     .put("prompt", prompt)
+
+private fun AgentSettings.toJson(): JSONObject = JSONObject()
+    .put("id", id)
+    .put("enabled", enabled)
+    .put("name", name)
+    .put("providerId", providerId)
+    .put("prompt", prompt)
+    .put("permissions", permissions.toJson())
+
+private fun AgentDataPermissions.toJson(): JSONObject = JSONObject()
+    .put("dailyRecords", dailyRecords)
+    .put("todos", todos)
+    .put("templates", templates)
+
+private fun List<LlmProviderSettings>.withLegacyLlmImport(
+    legacy: LlmImportSettings?
+): List<LlmProviderSettings> {
+    if (legacy == null || legacy == LlmImportSettings()) return this
+    val providerKey = legacy.provider.ifBlank { "custom" }.lowercase()
+    val legacyProvider = LlmProviderSettings(
+        id = "provider-legacy",
+        providerKey = providerKey,
+        name = legacy.provider.ifBlank { "自定义 Provider" },
+        modelName = legacy.modelName,
+        endpoint = legacy.endpoint,
+        apiKey = legacy.apiKey
+    )
+    return listOf(legacyProvider) + filterNot { it.providerKey == providerKey }
+}
+
+private fun List<AgentSettings>.withLegacyEncouragerAgent(
+    legacy: EncouragerAgentSettings?
+): List<AgentSettings> {
+    if (legacy == null) return this
+    val legacyAgent = AgentSettings(
+        id = "agent-encourager",
+        enabled = legacy.enabled,
+        name = legacy.name,
+        prompt = legacy.prompt,
+        permissions = AgentDataPermissions(dailyRecords = true)
+    )
+    return listOf(legacyAgent) + filterNot { it.id == legacyAgent.id }
+}
 
 private fun JSONArray.toStringList(): List<String> {
     return List(length()) { index -> optString(index) }.filter { it.isNotBlank() }

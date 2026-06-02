@@ -246,6 +246,9 @@ fun ProtatoApp() {
                         appState = appState,
                         selectedTodoId = selectedTodoId,
                         selectedTemplate = selectedTemplate,
+                        providers = appState.llmProviders,
+                        agents = appState.agents,
+                        nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
                         timerMode = timerMode,
                         remainingSeconds = remainingSeconds,
                         totalSeconds = totalSeconds,
@@ -399,6 +402,9 @@ fun ProtatoApp() {
                         records = appState.records,
                         templates = appState.templates,
                         todos = appState.todos,
+                        providers = appState.llmProviders,
+                        agents = appState.agents,
+                        nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
                         onUpdateRecord = { updatedRecord ->
                             setAppState(appState.copy(
                                 records = appState.records.map { record ->
@@ -443,6 +449,9 @@ private fun FocusScreen(
     appState: AppState,
     selectedTodoId: String?,
     selectedTemplate: RecordTemplate,
+    providers: List<LlmProviderSettings>,
+    agents: List<AgentSettings>,
+    nickname: String,
     timerMode: TimerMode,
     remainingSeconds: Int,
     totalSeconds: Int,
@@ -505,6 +514,9 @@ private fun FocusScreen(
             RecordDialog(
                 pendingRecord = record,
                 template = recordTemplate,
+                providers = providers,
+                agents = agents,
+                nickname = nickname,
                 onDismiss = onDismissRecord,
                 onSave = { answers ->
                     onSaveRecord(record, answers)
@@ -1401,9 +1413,13 @@ private fun RecordsScreen(
     records: List<PomodoroRecord>,
     templates: List<RecordTemplate>,
     todos: List<TodoItem>,
+    providers: List<LlmProviderSettings>,
+    agents: List<AgentSettings>,
+    nickname: String,
     onUpdateRecord: (PomodoroRecord) -> Unit
 ) {
     var editingRecord by remember { mutableStateOf<PomodoroRecord?>(null) }
+    var chattingRecord by remember { mutableStateOf<PomodoroRecord?>(null) }
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -1423,7 +1439,8 @@ private fun RecordsScreen(
                     RecordCard(
                         record = record,
                         template = templates.firstOrNull { it.id == record.templateId },
-                        onEdit = { editingRecord = record }
+                        onEdit = { editingRecord = record },
+                        onChat = { chattingRecord = record }
                     )
                 }
             }
@@ -1443,11 +1460,29 @@ private fun RecordsScreen(
                 }
             )
         }
+
+        chattingRecord?.let { record ->
+            val template = templates.firstOrNull { it.id == record.templateId }
+                ?: RecordTemplate(record.templateId, record.templateName, emptyList())
+            RecordChatDialog(
+                record = record,
+                template = template,
+                providers = providers,
+                agents = agents,
+                nickname = nickname,
+                onDismiss = { chattingRecord = null }
+            )
+        }
     }
 }
 
 @Composable
-private fun RecordCard(record: PomodoroRecord, template: RecordTemplate?, onEdit: () -> Unit) {
+private fun RecordCard(
+    record: PomodoroRecord,
+    template: RecordTemplate?,
+    onEdit: () -> Unit,
+    onChat: () -> Unit
+) {
     var expanded by rememberSaveable(record.id) { mutableStateOf(false) }
     val isBoundToTodo = record.todoId != null
     val answerCount = record.answers.size
@@ -1479,8 +1514,13 @@ private fun RecordCard(record: PomodoroRecord, template: RecordTemplate?, onEdit
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
-                IconButton(onClick = onEdit) {
-                    Icon(Icons.Outlined.Edit, contentDescription = "编辑记录")
+                Row {
+                    TextButton(onClick = onChat) {
+                        Text("Chat")
+                    }
+                    IconButton(onClick = onEdit) {
+                        Icon(Icons.Outlined.Edit, contentDescription = "编辑记录")
+                    }
                 }
             }
 
@@ -1573,22 +1613,45 @@ private fun SettingsScreen(
             )
         }
         item {
-            LlmImportSettingsCard(
-                settings = appState.llmImport,
-                onChange = { llmImport ->
-                    onStateChange(appState.copy(llmImport = llmImport))
+            LlmProviderListCard(
+                providers = appState.llmProviders,
+                onUpsert = { provider ->
+                    val exists = appState.llmProviders.any { it.id == provider.id }
+                    val providers = if (exists) {
+                        appState.llmProviders.map { if (it.id == provider.id) provider else it }
+                    } else {
+                        appState.llmProviders + provider
+                    }
+                    onStateChange(appState.copy(llmProviders = providers))
                 },
-                onClear = {
-                    onStateChange(appState.copy(llmImport = LlmImportSettings()))
+                onDelete = { provider ->
+                    onStateChange(
+                        appState.copy(
+                            llmProviders = appState.llmProviders.filterNot { it.id == provider.id },
+                            agents = appState.agents.map { agent ->
+                                if (agent.providerId == provider.id) agent.copy(providerId = "") else agent
+                            }
+                        )
+                    )
                 }
             )
         }
         item {
-            EncouragerAgentSettingsCard(
-                settings = appState.encouragerAgent,
+            AgentListCard(
+                agents = appState.agents,
+                providers = appState.llmProviders,
                 nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
-                onChange = { encouragerAgent ->
-                    onStateChange(appState.copy(encouragerAgent = encouragerAgent))
+                onUpsert = { agent ->
+                    val exists = appState.agents.any { it.id == agent.id }
+                    val agents = if (exists) {
+                        appState.agents.map { if (it.id == agent.id) agent else it }
+                    } else {
+                        appState.agents + agent
+                    }
+                    onStateChange(appState.copy(agents = agents))
+                },
+                onDelete = { agent ->
+                    onStateChange(appState.copy(agents = appState.agents.filterNot { it.id == agent.id }))
                 }
             )
         }
@@ -1654,18 +1717,12 @@ private fun NicknameSettingsCard(
 }
 
 @Composable
-private fun LlmImportSettingsCard(
-    settings: LlmImportSettings,
-    onChange: (LlmImportSettings) -> Unit,
-    onClear: () -> Unit
+private fun LlmProviderListCard(
+    providers: List<LlmProviderSettings>,
+    onUpsert: (LlmProviderSettings) -> Unit,
+    onDelete: (LlmProviderSettings) -> Unit
 ) {
-    val scope = rememberCoroutineScope()
-    var fetchedModels by remember { mutableStateOf<List<String>>(emptyList()) }
-    var modelMenuExpanded by remember { mutableStateOf(false) }
-    var loadingModels by remember { mutableStateOf(false) }
-    var modelFetchError by remember { mutableStateOf<String?>(null) }
-    val apiKeyMask = "***"
-    val apiKeyDisplay = if (settings.apiKey.isBlank()) "" else apiKeyMask
+    var editingProvider by remember { mutableStateOf<LlmProviderSettings?>(null) }
 
     ElevatedCard(
         shape = RoundedCornerShape(8.dp),
@@ -1675,75 +1732,438 @@ private fun LlmImportSettingsCard(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "大模型 LLM 导入",
+                    "大模型 Provider",
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
-                TextButton(onClick = onClear) {
-                    Icon(Icons.Outlined.Close, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("清空")
-                }
-            }
-            OutlinedTextField(
-                value = settings.provider,
-                onValueChange = { onChange(settings.copy(provider = it.take(40))) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("供应商") },
-                singleLine = true
-            )
-            OutlinedTextField(
-                value = settings.endpoint,
-                onValueChange = {
-                    fetchedModels = emptyList()
-                    modelFetchError = null
-                    onChange(settings.copy(endpoint = it.take(240)))
-                },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("接口地址") },
-                singleLine = true
-            )
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedButton(
-                    enabled = settings.endpoint.isNotBlank() && !loadingModels,
+                TextButton(
                     onClick = {
-                        scope.launch {
-                            loadingModels = true
-                            modelFetchError = null
-                            fetchedModels = runCatching {
-                                fetchLlmModels(settings.endpoint, settings.apiKey)
-                            }.getOrElse { error ->
-                                modelFetchError = error.message ?: "获取模型失败"
-                                emptyList()
-                            }
-                            loadingModels = false
-                        }
+                        editingProvider = LlmProviderSettings(
+                            id = newId(),
+                            providerKey = "custom",
+                            name = "自定义 Provider"
+                        )
                     }
                 ) {
-                    if (loadingModels) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
+                    Icon(Icons.Outlined.Add, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("自定义")
+                }
+            }
+            providers.forEach { provider ->
+                LlmProviderRow(provider = provider, onClick = { editingProvider = provider })
+            }
+        }
+    }
+
+    editingProvider?.let { provider ->
+        LlmProviderEditDialog(
+            initialProvider = provider,
+            allowDelete = provider.id !in defaultLlmProviders().map { it.id },
+            onDismiss = { editingProvider = null },
+            onSave = {
+                onUpsert(it)
+                editingProvider = null
+            },
+            onDelete = {
+                onDelete(provider)
+                editingProvider = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun LlmProviderRow(provider: LlmProviderSettings, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick),
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(provider.name, fontWeight = FontWeight.SemiBold)
+                Text(
+                    listOf(
+                        provider.modelName.ifBlank { "未选择模型" },
+                        provider.endpoint.ifBlank { "未设置接口" }
+                    ).joinToString(" · "),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text(
+                if (provider.apiKey.isBlank()) "未配置" else "已配置",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelLarge
+            )
+        }
+    }
+}
+
+@Composable
+private fun LlmProviderEditDialog(
+    initialProvider: LlmProviderSettings,
+    allowDelete: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (LlmProviderSettings) -> Unit,
+    onDelete: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var provider by remember(initialProvider.id) { mutableStateOf(initialProvider) }
+    var providerMenuExpanded by remember { mutableStateOf(false) }
+    var modelMenuExpanded by remember { mutableStateOf(false) }
+    var fetchedModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var loadingModels by remember { mutableStateOf(false) }
+    var modelFetchError by remember { mutableStateOf<String?>(null) }
+    val apiKeyMask = "***"
+    val apiKeyDisplay = if (provider.apiKey.isBlank()) "" else apiKeyMask
+    val providerPresets = defaultLlmProviders()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = { onSave(provider) }) {
+                Text("保存")
+            }
+        },
+        dismissButton = {
+            Row {
+                if (allowDelete) {
+                    TextButton(onClick = onDelete) {
+                        Text("删除")
+                    }
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("取消")
+                }
+            }
+        },
+        title = { Text("编辑 Provider") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box {
+                    OutlinedButton(
+                        onClick = { providerMenuExpanded = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(provider.name, modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
                         Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
                     }
-                    Spacer(Modifier.width(6.dp))
-                    Text("获取模型")
+                    DropdownMenu(
+                        expanded = providerMenuExpanded,
+                        onDismissRequest = { providerMenuExpanded = false }
+                    ) {
+                        providerPresets.forEach { preset ->
+                            DropdownMenuItem(
+                                text = { Text(preset.name) },
+                                onClick = {
+                                    provider = provider.copy(
+                                        providerKey = preset.providerKey,
+                                        name = preset.name,
+                                        endpoint = provider.endpoint.ifBlank { preset.endpoint }
+                                    )
+                                    providerMenuExpanded = false
+                                }
+                            )
+                        }
+                    }
                 }
-                Box(Modifier.weight(1f)) {
+                OutlinedTextField(
+                    value = provider.name,
+                    onValueChange = { provider = provider.copy(name = it.take(40)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("显示名称") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = provider.endpoint,
+                    onValueChange = {
+                        provider = provider.copy(endpoint = it.take(240))
+                        fetchedModels = emptyList()
+                        modelFetchError = null
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("接口地址") },
+                    singleLine = true
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     OutlinedButton(
-                        enabled = fetchedModels.isNotEmpty(),
-                        onClick = { modelMenuExpanded = true },
+                        enabled = provider.endpoint.isNotBlank() && !loadingModels,
+                        onClick = {
+                            scope.launch {
+                                loadingModels = true
+                                modelFetchError = null
+                                fetchedModels = runCatching {
+                                    fetchLlmModels(provider.endpoint, provider.apiKey)
+                                }.getOrElse { error ->
+                                    modelFetchError = error.message ?: "获取模型失败"
+                                    emptyList()
+                                }
+                                loadingModels = false
+                            }
+                        }
+                    ) {
+                        if (loadingModels) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp
+                            )
+                        } else {
+                            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Text("获取模型")
+                    }
+                    Box(Modifier.weight(1f)) {
+                        OutlinedButton(
+                            enabled = fetchedModels.isNotEmpty(),
+                            onClick = { modelMenuExpanded = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                provider.modelName.ifBlank { "选择模型" },
+                                modifier = Modifier.weight(1f),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                textAlign = TextAlign.Start
+                            )
+                            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                        }
+                        DropdownMenu(
+                            expanded = modelMenuExpanded,
+                            onDismissRequest = { modelMenuExpanded = false }
+                        ) {
+                            fetchedModels.forEach { model ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            model,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    },
+                                    onClick = {
+                                        provider = provider.copy(modelName = model)
+                                        modelMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+                if (fetchedModels.isEmpty()) {
+                    OutlinedTextField(
+                        value = provider.modelName,
+                        onValueChange = { provider = provider.copy(modelName = it.take(80)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("模型名称") },
+                        singleLine = true
+                    )
+                }
+                modelFetchError?.let { error ->
+                    Text(error, color = MaterialTheme.colorScheme.error)
+                }
+                OutlinedTextField(
+                    value = apiKeyDisplay,
+                    onValueChange = { value ->
+                        provider = when {
+                            value.isBlank() -> provider.copy(apiKey = "")
+                            value == apiKeyMask -> provider
+                            value.startsWith(apiKeyMask) -> {
+                                provider.copy(apiKey = value.removePrefix(apiKeyMask).take(240))
+                            }
+                            else -> provider.copy(apiKey = value.take(240))
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("API Key") },
+                    singleLine = true
+                )
+            }
+        }
+    )
+}
+
+@Composable
+private fun AgentListCard(
+    agents: List<AgentSettings>,
+    providers: List<LlmProviderSettings>,
+    nickname: String,
+    onUpsert: (AgentSettings) -> Unit,
+    onDelete: (AgentSettings) -> Unit
+) {
+    var editingAgent by remember { mutableStateOf<AgentSettings?>(null) }
+
+    ElevatedCard(
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Agent",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                TextButton(
+                    onClick = {
+                        editingAgent = AgentSettings(
+                            id = newId(),
+                            name = "新 Agent",
+                            providerId = providers.firstOrNull()?.id.orEmpty(),
+                            permissions = AgentDataPermissions()
+                        )
+                    }
+                ) {
+                    Icon(Icons.Outlined.Add, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("添加")
+                }
+            }
+            if (agents.isEmpty()) {
+                Text("还没有 Agent。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                agents.forEach { agent ->
+                    AgentRow(
+                        agent = agent,
+                        providerName = providers.firstOrNull { it.id == agent.providerId }?.name ?: "未选择 Provider",
+                        onClick = { editingAgent = agent }
+                    )
+                }
+            }
+        }
+    }
+
+    editingAgent?.let { agent ->
+        AgentEditDialog(
+            initialAgent = agent,
+            providers = providers,
+            nickname = nickname,
+            onDismiss = { editingAgent = null },
+            onSave = {
+                onUpsert(it)
+                editingAgent = null
+            },
+            onDelete = {
+                onDelete(agent)
+                editingAgent = null
+            }
+        )
+    }
+}
+
+@Composable
+private fun AgentRow(
+    agent: AgentSettings,
+    providerName: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick),
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(agent.name, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "$providerName · ${agent.permissions.label()}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text(
+                if (agent.enabled) "启用" else "停用",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelLarge
+            )
+        }
+    }
+}
+
+@Composable
+private fun AgentEditDialog(
+    initialAgent: AgentSettings,
+    providers: List<LlmProviderSettings>,
+    nickname: String,
+    onDismiss: () -> Unit,
+    onSave: (AgentSettings) -> Unit,
+    onDelete: () -> Unit
+) {
+    var agent by remember(initialAgent.id) { mutableStateOf(initialAgent) }
+    var providerMenuExpanded by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = { onSave(agent) }) {
+                Text("保存")
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onDelete) {
+                    Text("删除")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("取消")
+                }
+            }
+        },
+        title = { Text("编辑 Agent") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("启用", modifier = Modifier.weight(1f))
+                    Switch(
+                        checked = agent.enabled,
+                        onCheckedChange = { agent = agent.copy(enabled = it) }
+                    )
+                }
+                OutlinedTextField(
+                    value = agent.name,
+                    onValueChange = { agent = agent.copy(name = it.take(24)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Agent 名称") },
+                    singleLine = true
+                )
+                Box {
+                    OutlinedButton(
+                        onClick = { providerMenuExpanded = true },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            settings.modelName.ifBlank { "选择模型" },
+                            providers.firstOrNull { it.id == agent.providerId }?.name ?: "选择 Provider",
                             modifier = Modifier.weight(1f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -1752,114 +2172,84 @@ private fun LlmImportSettingsCard(
                         Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
                     }
                     DropdownMenu(
-                        expanded = modelMenuExpanded,
-                        onDismissRequest = { modelMenuExpanded = false }
+                        expanded = providerMenuExpanded,
+                        onDismissRequest = { providerMenuExpanded = false }
                     ) {
-                        fetchedModels.forEach { model ->
+                        providers.forEach { provider ->
                             DropdownMenuItem(
-                                text = {
-                                    Text(
-                                        model,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                },
+                                text = { Text(provider.name) },
                                 onClick = {
-                                    onChange(settings.copy(modelName = model))
-                                    modelMenuExpanded = false
+                                    agent = agent.copy(providerId = provider.id)
+                                    providerMenuExpanded = false
                                 }
                             )
                         }
                     }
                 }
-            }
-            if (fetchedModels.isEmpty()) {
+                Text("数据权限", fontWeight = FontWeight.SemiBold)
+                PermissionCheckbox(
+                    checked = agent.permissions.dailyRecords,
+                    label = "每日记录",
+                    onCheckedChange = {
+                        agent = agent.copy(
+                            permissions = agent.permissions.copy(dailyRecords = it)
+                        )
+                    }
+                )
+                PermissionCheckbox(
+                    checked = agent.permissions.todos,
+                    label = "待办",
+                    onCheckedChange = {
+                        agent = agent.copy(
+                            permissions = agent.permissions.copy(todos = it)
+                        )
+                    }
+                )
+                PermissionCheckbox(
+                    checked = agent.permissions.templates,
+                    label = "模板",
+                    onCheckedChange = {
+                        agent = agent.copy(
+                            permissions = agent.permissions.copy(templates = it)
+                        )
+                    }
+                )
+                TextButton(
+                    onClick = {
+                        val prompt = agent.prompt
+                        val nextPrompt = if ("{nickname}" in prompt || nickname in prompt) {
+                            prompt
+                        } else {
+                            "请称呼我为「$nickname」。$prompt"
+                        }
+                        agent = agent.copy(prompt = nextPrompt.take(500))
+                    }
+                ) {
+                    Icon(Icons.Outlined.Add, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("插入昵称")
+                }
                 OutlinedTextField(
-                    value = settings.modelName,
-                    onValueChange = { onChange(settings.copy(modelName = it.take(80))) },
+                    value = agent.prompt,
+                    onValueChange = { agent = agent.copy(prompt = it.take(500)) },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("模型名称") },
-                    singleLine = true
+                    label = { Text("提示词") },
+                    minLines = 3
                 )
             }
-            modelFetchError?.let { error ->
-                Text(error, color = MaterialTheme.colorScheme.error)
-            }
-            OutlinedTextField(
-                value = apiKeyDisplay,
-                onValueChange = { value ->
-                    when {
-                        value.isBlank() -> onChange(settings.copy(apiKey = ""))
-                        value == apiKeyMask -> Unit
-                        value.startsWith(apiKeyMask) -> {
-                            onChange(settings.copy(apiKey = value.removePrefix(apiKeyMask).take(240)))
-                        }
-                        value != apiKeyMask -> onChange(settings.copy(apiKey = value.take(240)))
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("API Key") },
-                singleLine = true
-            )
         }
-    }
+    )
 }
 
 @Composable
-private fun EncouragerAgentSettingsCard(
-    settings: EncouragerAgentSettings,
-    nickname: String,
-    onChange: (EncouragerAgentSettings) -> Unit
+private fun PermissionCheckbox(
+    checked: Boolean,
+    label: String,
+    onCheckedChange: (Boolean) -> Unit
 ) {
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("鼓励师 Agent", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        if (settings.enabled) "已启用" else "未启用",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = settings.enabled,
-                    onCheckedChange = { onChange(settings.copy(enabled = it)) }
-                )
-            }
-            OutlinedTextField(
-                value = settings.name,
-                onValueChange = { onChange(settings.copy(name = it.take(24))) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Agent 名称") },
-                singleLine = true
-            )
-            TextButton(
-                onClick = {
-                    val prompt = settings.prompt
-                    val nextPrompt = if ("{nickname}" in prompt || nickname in prompt) {
-                        prompt
-                    } else {
-                        "请称呼我为「$nickname」。$prompt"
-                    }
-                    onChange(settings.copy(prompt = nextPrompt.take(500)))
-                }
-            ) {
-                Icon(Icons.Outlined.Add, contentDescription = null)
-                Spacer(Modifier.width(6.dp))
-                Text("插入昵称")
-            }
-            OutlinedTextField(
-                value = settings.prompt,
-                onValueChange = { onChange(settings.copy(prompt = it.take(500))) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("鼓励提示词") },
-                minLines = 3
-            )
-        }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
+        Text(label)
     }
 }
 
@@ -1880,15 +2270,215 @@ private fun SettingLine(label: String, value: String) {
     }
 }
 
+private data class LlmChatMessage(
+    val role: String,
+    val content: String
+)
+
+@Composable
+private fun RecordChatDialog(
+    record: PomodoroRecord,
+    template: RecordTemplate,
+    providers: List<LlmProviderSettings>,
+    agents: List<AgentSettings>,
+    nickname: String,
+    onDismiss: () -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val selectableAgents = agents.filter { it.enabled }.ifEmpty { agents }
+    var selectedAgentId by remember(record.id) { mutableStateOf(selectableAgents.firstOrNull()?.id) }
+    var agentMenuExpanded by remember { mutableStateOf(false) }
+    var input by remember(record.id) { mutableStateOf("") }
+    var loading by remember(record.id) { mutableStateOf(false) }
+    var errorText by remember(record.id) { mutableStateOf<String?>(null) }
+    var messages by remember(record.id) {
+        mutableStateOf(
+            listOf(
+                LlmChatMessage(
+                    "assistant",
+                    "我在这里。你可以问这次番茄做得怎么样、下一步怎么拆，或者让我帮你从记录里找一个继续推进的角度。"
+                )
+            )
+        )
+    }
+    val selectedAgent = selectableAgents.firstOrNull { it.id == selectedAgentId }
+    val selectedProvider = selectedAgent?.providerId?.let { providerId ->
+        providers.firstOrNull { it.id == providerId }
+    } ?: providers.firstOrNull { it.isConfiguredForChat() }
+    val canSend = selectedAgent != null &&
+        selectedProvider?.isConfiguredForChat() == true &&
+        input.isNotBlank() &&
+        !loading
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                enabled = canSend,
+                onClick = {
+                    val agent = selectedAgent ?: return@TextButton
+                    val provider = selectedProvider ?: return@TextButton
+                    val userMessage = LlmChatMessage("user", input.trim())
+                    val nextMessages = messages + userMessage
+                    input = ""
+                    messages = nextMessages
+                    errorText = null
+                    scope.launch {
+                        loading = true
+                        val reply = runCatching {
+                            requestRecordChat(
+                                record = record,
+                                template = template,
+                                agent = agent,
+                                provider = provider,
+                                nickname = nickname,
+                                messages = nextMessages
+                            )
+                        }.getOrElse { error ->
+                            errorText = error.message ?: "发送失败"
+                            null
+                        }
+                        if (reply != null) {
+                            messages = messages + LlmChatMessage("assistant", reply)
+                        }
+                        loading = false
+                    }
+                }
+            ) {
+                Text(if (loading) "发送中" else "发送")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        },
+        title = { Text("记录 Chat") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box {
+                    OutlinedButton(
+                        enabled = selectableAgents.isNotEmpty(),
+                        onClick = { agentMenuExpanded = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            selectedAgent?.name ?: "选择 Agent",
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Start
+                        )
+                        Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                    }
+                    DropdownMenu(
+                        expanded = agentMenuExpanded,
+                        onDismissRequest = { agentMenuExpanded = false }
+                    ) {
+                        selectableAgents.forEach { agent ->
+                            DropdownMenuItem(
+                                text = { Text(agent.name) },
+                                onClick = {
+                                    selectedAgentId = agent.id
+                                    agentMenuExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+                Text(
+                    selectedProvider?.name?.let { "Provider：$it" } ?: "先在设置里配置 Provider",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (selectedAgent != null && !selectedAgent.permissions.dailyRecords) {
+                    Text("当前 Agent 未开启每日记录权限，本次对话不会读取记录详情。", color = MaterialTheme.colorScheme.error)
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 320.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    messages.forEach { message ->
+                        ChatBubble(message)
+                    }
+                    if (loading) {
+                        Text("AI 正在思考...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                errorText?.let { error ->
+                    Text(error, color = MaterialTheme.colorScheme.error)
+                }
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it.take(800) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("输入问题") },
+                    minLines = 2
+                )
+            }
+        }
+    )
+}
+
+@Composable
+private fun ChatBubble(message: LlmChatMessage) {
+    val isUser = message.role == "user"
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = if (isUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Text(
+            text = message.content,
+            modifier = Modifier.padding(10.dp)
+        )
+    }
+}
+
 @Composable
 private fun RecordDialog(
     pendingRecord: PendingRecord,
     template: RecordTemplate,
+    providers: List<LlmProviderSettings>,
+    agents: List<AgentSettings>,
+    nickname: String,
     onDismiss: () -> Unit,
     onSave: (List<FieldAnswer>) -> Unit
 ) {
     val answers = remember(template.id) { mutableStateMapOf<String, String>() }
     val missingRequired = hasMissingRequiredAnswers(template, answers)
+    var encouragement by remember(pendingRecord.startedAt) {
+        mutableStateOf(localEncouragement(pendingRecord, nickname))
+    }
+    var loadingEncouragement by remember(pendingRecord.startedAt) { mutableStateOf(false) }
+
+    LaunchedEffect(pendingRecord.startedAt, agents, providers) {
+        val agent = selectEncouragerAgent(agents)
+        val provider = agent?.providerId?.let { providerId ->
+            providers.firstOrNull { it.id == providerId }
+        } ?: providers.firstOrNull { it.isConfiguredForChat() }
+        if (agent != null && provider != null && provider.isConfiguredForChat()) {
+            loadingEncouragement = true
+            encouragement = runCatching {
+                generateAiEncouragement(
+                    pendingRecord = pendingRecord,
+                    agent = agent,
+                    provider = provider,
+                    nickname = nickname
+                )
+            }.getOrElse {
+                localEncouragement(pendingRecord, nickname)
+            }
+            loadingEncouragement = false
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1915,6 +2505,18 @@ private fun RecordDialog(
                     "${pendingRecord.todoTitle} · ${pendingRecord.focusMinutes} 分钟",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("AI 鼓励", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (loadingEncouragement) "正在认真组织一句足够贴心的话..." else encouragement
+                        )
+                    }
+                }
                 RecordAnswerFields(template = template, answers = answers)
             }
         }
@@ -2128,6 +2730,99 @@ private fun FieldType.label(): String = when (this) {
     FieldType.ShortAnswer -> "简答"
 }
 
+private fun AgentDataPermissions.label(): String {
+    val names = buildList {
+        if (dailyRecords) add("每日记录")
+        if (todos) add("待办")
+        if (templates) add("模板")
+    }
+    return names.ifEmpty { listOf("无数据权限") }.joinToString("、")
+}
+
+private fun LlmProviderSettings.isConfiguredForChat(): Boolean {
+    return endpoint.isNotBlank() && modelName.isNotBlank() && apiKey.isNotBlank()
+}
+
+private fun selectEncouragerAgent(agents: List<AgentSettings>): AgentSettings? {
+    val enabledAgents = agents.filter { it.enabled }
+    return enabledAgents.firstOrNull { it.name.contains("鼓励") } ?: enabledAgents.firstOrNull()
+}
+
+private fun String.withNickname(nickname: String): String {
+    return replace("{nickname}", nickname.ifBlank { DEFAULT_NICKNAME })
+}
+
+private fun localEncouragement(record: PendingRecord, nickname: String): String {
+    val name = nickname.ifBlank { DEFAULT_NICKNAME }
+    return "$name，你刚刚把 ${record.focusMinutes} 分钟真正交给了「${record.todoTitle}」。这不是一句轻飘飘的“不错”，而是一次清清楚楚的推进：你坐下来、守住了这一轮、让事情往前走了一步。先把这份完成感收下，然后用复盘写下一个最小下一步。你已经启动了惯性，接下来只需要顺着它再走一点。"
+}
+
+private suspend fun generateAiEncouragement(
+    pendingRecord: PendingRecord,
+    agent: AgentSettings,
+    provider: LlmProviderSettings,
+    nickname: String
+): String {
+    val systemPrompt = buildString {
+        append(agent.prompt.withNickname(nickname))
+        append("\n你现在要在用户完成一轮番茄后给出鼓励。必须具体、真诚、有力量，不要空泛鸡汤，不要夸张，不要说教。")
+        append(" 需要点名用户刚完成的任务和时长，并给一个很小、很容易继续执行的下一步。")
+    }
+    val userPrompt = "用户昵称：${nickname.ifBlank { DEFAULT_NICKNAME }}\n任务：${pendingRecord.todoTitle}\n专注时长：${pendingRecord.focusMinutes} 分钟\n请给一段 80-140 字中文鼓励。"
+    return requestLlmChat(
+        provider = provider,
+        messages = listOf(
+            LlmChatMessage("system", systemPrompt),
+            LlmChatMessage("user", userPrompt)
+        )
+    )
+}
+
+private suspend fun requestRecordChat(
+    record: PomodoroRecord,
+    template: RecordTemplate,
+    agent: AgentSettings,
+    provider: LlmProviderSettings,
+    nickname: String,
+    messages: List<LlmChatMessage>
+): String {
+    val systemPrompt = buildString {
+        append(agent.prompt.withNickname(nickname))
+        append("\n你是 Protato 里的记录对话 Agent。回答要具体、可执行、温和，不要编造不存在的数据。")
+        if (agent.permissions.dailyRecords) {
+            append("\n你可以读取当前这条番茄记录：\n")
+            append(record.toPromptContext(template))
+        } else {
+            append("\n当前 Agent 没有每日记录权限，不能使用这条记录的具体内容，只能根据用户输入做一般建议。")
+        }
+        if (agent.permissions.todos) {
+            append("\n你被允许讨论待办相关安排。")
+        }
+        if (agent.permissions.templates) {
+            append("\n你被允许讨论记录模板和复盘字段。")
+        }
+    }
+    return requestLlmChat(
+        provider = provider,
+        messages = listOf(LlmChatMessage("system", systemPrompt)) + messages.takeLast(12)
+    )
+}
+
+private fun PomodoroRecord.toPromptContext(template: RecordTemplate): String {
+    val answersText = answers.joinToString("\n") { answer ->
+        val title = template.fields.firstOrNull { it.id == answer.fieldId }?.title ?: "字段"
+        "- $title：${answer.value.ifBlank { "未填写" }}"
+    }
+    return buildString {
+        append("任务：$todoTitle\n")
+        append("专注时长：$focusMinutes 分钟\n")
+        append("结束时间：${formatTime(endedAt)}\n")
+        append("模板：$templateName\n")
+        append("回答：\n")
+        append(answersText.ifBlank { "无回答" })
+    }
+}
+
 private fun hasMissingRequiredAnswers(
     template: RecordTemplate,
     answers: Map<String, String>
@@ -2222,12 +2917,72 @@ private suspend fun fetchLlmModels(endpoint: String, apiKey: String): List<Strin
     }
 }
 
+private suspend fun requestLlmChat(
+    provider: LlmProviderSettings,
+    messages: List<LlmChatMessage>
+): String {
+    return withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("model", provider.modelName)
+            .put("temperature", 0.8)
+            .put(
+                "messages",
+                JSONArray().apply {
+                    messages.forEach { message ->
+                        put(
+                            JSONObject()
+                                .put("role", message.role)
+                                .put("content", message.content)
+                        )
+                    }
+                }
+            )
+        val connection = (URL(normalizeChatEndpoint(provider.endpoint)).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("Authorization", "Bearer ${provider.apiKey}")
+        }
+        try {
+            connection.outputStream.use { stream ->
+                stream.write(body.toString().toByteArray(Charsets.UTF_8))
+            }
+            val responseCode = connection.responseCode
+            val stream = if (responseCode in 200..299) {
+                connection.inputStream
+            } else {
+                connection.errorStream ?: connection.inputStream
+            }
+            val response = BufferedReader(InputStreamReader(stream)).use { it.readText() }
+            if (responseCode !in 200..299) {
+                throw IllegalStateException("AI 请求失败：HTTP $responseCode")
+            }
+            parseChatContent(response).ifBlank {
+                throw IllegalStateException("AI 没有返回内容")
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+}
+
 private fun normalizeModelsEndpoint(endpoint: String): String {
     val trimmed = endpoint.trim().trimEnd('/')
     return when {
         trimmed.endsWith("/models") -> trimmed
         trimmed.endsWith("/v1") -> "$trimmed/models"
         else -> "$trimmed/v1/models"
+    }
+}
+
+private fun normalizeChatEndpoint(endpoint: String): String {
+    val trimmed = endpoint.trim().trimEnd('/')
+    return when {
+        trimmed.endsWith("/chat/completions") -> trimmed
+        trimmed.endsWith("/v1") -> "$trimmed/chat/completions"
+        else -> "$trimmed/v1/chat/completions"
     }
 }
 
@@ -2246,6 +3001,13 @@ private fun parseModelNames(body: String): List<String> {
             else -> ""
         }
     }.filter { it.isNotBlank() }.distinct()
+}
+
+private fun parseChatContent(body: String): String {
+    val root = JSONObject(body)
+    val choice = root.optJSONArray("choices")?.optJSONObject(0) ?: return ""
+    val messageContent = choice.optJSONObject("message")?.optString("content").orEmpty()
+    return messageContent.ifBlank { choice.optString("text") }.trim()
 }
 
 private fun newId(): String = UUID.randomUUID().toString()
