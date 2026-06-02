@@ -135,6 +135,7 @@ data class AppState(
 
 const val DEFAULT_NICKNAME = "专注者"
 const val DEFAULT_ENCOURAGER_PROMPT = "请称呼我为「{nickname}」，用温和、具体、不油腻的方式鼓励我继续完成下一轮番茄。"
+const val AGENT_STYLE_PROMPT = "允许在自然语言回复中使用少量贴切 emoji 表情，让语气更有人味；不要堆砌，结构化输出场景必须优先遵守指定格式。"
 
 fun defaultLlmProviders(): List<LlmProviderSettings> {
     return listOf(

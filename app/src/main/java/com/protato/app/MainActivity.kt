@@ -4190,6 +4190,11 @@ private fun String.withNickname(nickname: String): String {
     return replace("{nickname}", nickname.ifBlank { DEFAULT_NICKNAME })
 }
 
+private fun StringBuilder.appendAgentStylePrompt() {
+    append("\n")
+    append(AGENT_STYLE_PROMPT)
+}
+
 private fun localEncouragement(record: PendingRecord, nickname: String): String {
     val name = nickname.ifBlank { DEFAULT_NICKNAME }
     return "$name，你刚刚把 ${record.focusMinutes} 分钟真正交给了「${record.todoTitle}」。这不是一句轻飘飘的“不错”，而是一次清清楚楚的推进：你坐下来、守住了这一轮、让事情往前走了一步。先把这份完成感收下，然后用复盘写下一个最小下一步。你已经启动了惯性，接下来只需要顺着它再走一点。"
@@ -4211,9 +4216,10 @@ private suspend fun generateDailySummary(
     if (!provider.isConfiguredForChat()) return fallback
     val systemPrompt = buildString {
         append(agent.prompt.withNickname(nickname))
+        appendAgentStylePrompt()
         append("\n你是 Protato 的每日番茄总结 Agent。你要把当天番茄记录汇总成一篇自然、清晰、有洞察的中文总结文章。")
         append(" 必须包含：番茄数量、总专注时长、专注对象/次数、今天状态评价、一个具体改进建议，以及最后真诚有力的鼓励。")
-        append(" 请使用 Markdown 输出，可以使用二级标题、列表、加粗和少量贴切 emoji，让总结更生动但不要花哨。")
+        append(" 请使用 Markdown 输出，可以使用二级标题、列表和加粗。")
         append(" 不要编造记录之外的事实。")
     }
     val userPrompt = buildString {
@@ -4288,6 +4294,7 @@ private suspend fun generateTodoSuggestions(
     val today = dayKey(System.currentTimeMillis())
     val systemPrompt = buildString {
         append(agent.prompt.withNickname(nickname))
+        appendAgentStylePrompt()
         append("\n你是 Protato 的待办整理助手。把用户随口说出的计划整理成短小、明确、可执行的 Todo。")
         append(" 今天日期是 $today。")
         append(" 只输出待办列表，每行一个，格式严格为：任务标题 | yyyy-MM-dd 或 空 | 标签1,标签2 | 番茄数。")
@@ -4313,6 +4320,7 @@ private suspend fun generateTemplateSuggestion(
 ): RecordTemplate {
     val systemPrompt = buildString {
         append(agent.prompt.withNickname(nickname))
+        appendAgentStylePrompt()
         append("\n你是 Protato 的番茄复盘模板生成助手。根据用户描述生成一个简洁、可执行的记录模板。")
         append(" 第一行格式严格为：模板名称 | 名称。")
         append(" 后续每行格式严格为：字段 | 标题 | short 或 single | required 或 optional | 选项1,选项2。")
@@ -4574,6 +4582,7 @@ private suspend fun generateAiEncouragement(
 ): String {
     val systemPrompt = buildString {
         append(agent.prompt.withNickname(nickname))
+        appendAgentStylePrompt()
         append("\n你现在要在用户完成一轮番茄后给出鼓励。必须具体、真诚、有力量，不要空泛鸡汤，不要夸张，不要说教。")
         append(" 需要点名用户刚完成的任务和时长，并给一个很小、很容易继续执行的下一步。")
     }
@@ -4597,6 +4606,7 @@ private suspend fun requestRecordChat(
 ): String {
     val systemPrompt = buildString {
         append(agent.prompt.withNickname(nickname))
+        appendAgentStylePrompt()
         append("\n你是 Protato 里的记录对话 Agent。回答要具体、可执行、温和，不要编造不存在的数据。")
         if (agent.permissions.dailyRecords) {
             append("\n你可以读取当前这条番茄记录：\n")
