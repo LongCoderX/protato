@@ -65,6 +65,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
@@ -91,6 +93,7 @@ import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -134,6 +137,7 @@ import java.text.ParseException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -934,32 +938,25 @@ private fun TodoScreen(
     onDeleteMany: (Set<String>) -> Unit,
     onAddMany: (List<TodoItem>) -> Unit
 ) {
-    var title by rememberSaveable { mutableStateOf("") }
-    var draftTags by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
-    var dueDateText by rememberSaveable { mutableStateOf("") }
     var editingTodo by remember { mutableStateOf<TodoItem?>(null) }
     var showingAiTodo by remember { mutableStateOf(false) }
-    var editingDraftTags by rememberSaveable { mutableStateOf(false) }
     var selectedTodoIds by rememberSaveable { mutableStateOf(setOf<String>()) }
     var selectedTag by rememberSaveable { mutableStateOf<String?>(null) }
     val selecting = selectedTodoIds.isNotEmpty()
+    val todayKey = dayKey(System.currentTimeMillis())
     val availableTags = remember(todos) {
         todos.flatMap { it.tags }
             .distinctBy { it.lowercase(Locale.getDefault()) }
             .sorted()
     }
-    val visibleTodos = remember(todos, selectedTag) {
+    val todayTodos = remember(todos, todayKey) {
+        todos.filter { it.dueDate == todayKey }
+    }
+    val visibleTodos = remember(todayTodos, selectedTag) {
         selectedTag?.let { tag ->
-            todos.filter { todo -> todo.tags.any { it.equals(tag, ignoreCase = true) } }
-        } ?: todos
+            todayTodos.filter { todo -> todo.tags.any { it.equals(tag, ignoreCase = true) } }
+        } ?: todayTodos
     }
-    val groupedTodos = remember(visibleTodos) {
-        visibleTodos.groupBy { it.dueDate }
-            .toSortedMap(compareBy(nullsLast()) { it })
-            .toList()
-    }
-    val normalizedDueDate = normalizedTodoDate(dueDateText)
-    val dateIsValid = dueDateText.isBlank() || normalizedDueDate != null
 
     Column(
         modifier = Modifier
@@ -983,61 +980,32 @@ private fun TodoScreen(
                     }
                 )
             } else {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedTextField(
-                            value = title,
-                            onValueChange = { title = it },
-                            modifier = Modifier.weight(1f),
-                            label = { Text("新待办") },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
-                        )
-                        FilledIconButton(
-                            onClick = {
-                                if (title.isNotBlank() && dateIsValid) {
-                                    onAdd(
-                                        TodoItem(
-                                            id = newId(),
-                                            title = title.trim(),
-                                            tags = draftTags,
-                                            dueDate = normalizedDueDate
-                                        )
-                                    )
-                                    title = ""
-                                    draftTags = emptyList()
-                                    dueDateText = ""
-                                }
-                            }
-                        ) {
-                            Icon(Icons.Outlined.Add, contentDescription = "添加")
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilledIconButton(
+                        onClick = {
+                            editingTodo = TodoItem(
+                                id = newId(),
+                                title = "",
+                                dueDate = todayKey
+                            )
                         }
-                        OutlinedButton(onClick = { showingAiTodo = true }) {
-                            Text("AI")
-                        }
-                    }
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        OutlinedTextField(
-                            value = dueDateText,
-                            onValueChange = { dueDateText = it.filter { char -> char.isDigit() || char == '-' }.take(10) },
-                            modifier = Modifier.weight(0.9f),
-                            label = { Text("日期 yyyy-MM-dd") },
-                            singleLine = true,
-                            isError = !dateIsValid,
-                            leadingIcon = { Icon(Icons.Outlined.DateRange, contentDescription = null) }
-                        )
-                        TodoTagPickerButton(
-                            selectedTags = draftTags,
-                            onClick = { editingDraftTags = true },
-                            modifier = Modifier.weight(1.1f)
-                        )
+                        Icon(Icons.Outlined.Add, contentDescription = "新建待办")
                     }
+                    OutlinedButton(onClick = { showingAiTodo = true }) {
+                        Text("AI")
+                    }
+                    Text(
+                        "今天 ${visibleTodos.count { !it.completed }}/${todayTodos.size}",
+                        modifier = Modifier.weight(1f),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.End,
+                        fontWeight = FontWeight.SemiBold
+                    )
                 }
             }
             if (availableTags.isNotEmpty()) {
@@ -1060,47 +1028,30 @@ private fun TodoScreen(
                 item {
                     EmptyState(
                         if (selectedTag == null) {
-                            "还没有待办，先添加一个明确的小目标。"
+                            "今天还没有待办，点 + 添加一个明确的小目标。"
                         } else {
-                            "这个标签下还没有待办。"
+                            "今天这个标签下还没有待办。"
                         }
                     )
                 }
             }
-            groupedTodos.forEach { (dueDate, dateTodos) ->
-                item(key = "date-${dueDate ?: "none"}") {
-                    TodoDateGroupHeader(dueDate = dueDate, count = dateTodos.size)
-                }
-                items(dateTodos, key = { it.id }) { todo ->
-                    TodoRow(
-                        todo = todo,
-                        selected = todo.id in selectedTodoIds,
-                        selecting = selecting,
-                        onToggle = { onToggle(todo) },
-                        onEdit = { editingTodo = todo },
-                        onDelete = { onDelete(todo) },
-                        onToggleSelected = {
-                            selectedTodoIds = selectedTodoIds.toggle(todo.id)
-                        },
-                        onLongPress = {
-                            selectedTodoIds = selectedTodoIds + todo.id
-                        }
-                    )
-                }
+            items(visibleTodos, key = { it.id }) { todo ->
+                TodoRow(
+                    todo = todo,
+                    selected = todo.id in selectedTodoIds,
+                    selecting = selecting,
+                    onToggle = { onToggle(todo) },
+                    onEdit = { editingTodo = todo },
+                    onDelete = { onDelete(todo) },
+                    onToggleSelected = {
+                        selectedTodoIds = selectedTodoIds.toggle(todo.id)
+                    },
+                    onLongPress = {
+                        selectedTodoIds = selectedTodoIds + todo.id
+                    }
+                )
             }
         }
-    }
-
-    if (editingDraftTags) {
-        TodoTagEditDialog(
-            availableTags = availableTags,
-            selectedTags = draftTags,
-            onDismiss = { editingDraftTags = false },
-            onSave = { tags ->
-                draftTags = tags
-                editingDraftTags = false
-            }
-        )
     }
 
     editingTodo?.let { todo ->
@@ -1109,7 +1060,11 @@ private fun TodoScreen(
             availableTags = availableTags,
             onDismiss = { editingTodo = null },
             onSave = { updatedTodo ->
-                onUpdate(updatedTodo)
+                if (todos.any { it.id == updatedTodo.id }) {
+                    onUpdate(updatedTodo)
+                } else {
+                    onAdd(updatedTodo)
+                }
                 editingTodo = null
             }
         )
@@ -1246,18 +1201,36 @@ private fun TodoTagPickerButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    OutlinedButton(
+    IconButton(
         onClick = onClick,
-        modifier = modifier.height(56.dp)
+        modifier = modifier.size(48.dp)
     ) {
-        Icon(Icons.Outlined.Label, contentDescription = null)
-        Spacer(Modifier.width(8.dp))
-        Text(
-            text = if (selectedTags.isEmpty()) "添加标签" else selectedTags.joinToString(" ") { "#$it" },
-            modifier = Modifier.weight(1f),
-            textAlign = TextAlign.Start,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+        Icon(
+            Icons.Outlined.Label,
+            contentDescription = "编辑标签",
+            tint = selectedTags.firstOrNull()?.let(::todoTagColor) ?: MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun TodoDatePickerButton(
+    dueDate: String?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = modifier.size(48.dp)
+    ) {
+        Icon(
+            Icons.Outlined.DateRange,
+            contentDescription = "选择日期",
+            tint = if (dueDate == dayKey(System.currentTimeMillis())) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            }
         )
     }
 }
@@ -1354,6 +1327,48 @@ private fun TodoTagEditDialog(
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TodoDatePickerDialog(
+    initialDate: String?,
+    onDismiss: () -> Unit,
+    onClear: () -> Unit,
+    onSelected: (String) -> Unit
+) {
+    val state = rememberDatePickerState(
+        initialSelectedDateMillis = initialDate?.let(::dateKeyToUtcMillis)
+            ?: System.currentTimeMillis()
+    )
+
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                enabled = state.selectedDateMillis != null,
+                onClick = {
+                    state.selectedDateMillis?.let { millis ->
+                        onSelected(utcDayKey(millis))
+                    }
+                }
+            ) {
+                Text("选择")
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onClear) {
+                    Text("清除")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("取消")
+                }
+            }
+        }
+    ) {
+        DatePicker(state = state)
+    }
+}
+
 @Composable
 private fun TodoTagFilterBar(
     tags: List<String>,
@@ -1402,6 +1417,7 @@ private fun TodoRow(
     onLongPress: () -> Unit
 ) {
     val dismissState = rememberSwipeToDismissBoxState()
+    var expanded by rememberSaveable(todo.id) { mutableStateOf(false) }
 
     LaunchedEffect(dismissState.currentValue) {
         when (dismissState.currentValue) {
@@ -1428,7 +1444,11 @@ private fun TodoRow(
                 .fillMaxWidth()
                 .combinedClickable(
                     onClick = {
-                        if (selecting) onToggleSelected()
+                        if (selecting) {
+                            onToggleSelected()
+                        } else {
+                            expanded = !expanded
+                        }
                     },
                     onLongClick = onLongPress
                 ),
@@ -1465,7 +1485,9 @@ private fun TodoRow(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
-                    TodoMetadataRow(todo = todo)
+                    if (expanded) {
+                        TodoExpandedDetails(todo = todo)
+                    }
                 }
             }
         }
@@ -1473,44 +1495,25 @@ private fun TodoRow(
 }
 
 @Composable
-private fun TodoMetadataRow(todo: TodoItem) {
+private fun TodoExpandedDetails(todo: TodoItem) {
     if (todo.dueDate == null && todo.tags.isEmpty()) return
 
-    LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         todo.dueDate?.let { dueDate ->
-            item {
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 TodoDateChip(dueDate)
             }
         }
-        items(todo.tags, key = { it }) { tag ->
-            TodoTagChip(tag)
+        if (todo.tags.isNotEmpty()) {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                items(todo.tags, key = { it }) { tag ->
+                    TodoTagChip(tag)
+                }
+            }
         }
-    }
-}
-
-@Composable
-private fun TodoDateGroupHeader(dueDate: String?, count: Int) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            text = dueDate?.let(::formatDayLabel) ?: "未安排日期",
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary
-        )
-        Text(
-            "$count 项",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            style = MaterialTheme.typography.labelLarge
-        )
     }
 }
 
@@ -1635,22 +1638,21 @@ private fun TodoEditorDialog(
 ) {
     var title by rememberSaveable(todo.id) { mutableStateOf(todo.title) }
     var draftTags by rememberSaveable(todo.id) { mutableStateOf(todo.tags) }
-    var dueDateText by rememberSaveable(todo.id) { mutableStateOf(todo.dueDate.orEmpty()) }
+    var draftDueDate by rememberSaveable(todo.id) { mutableStateOf(todo.dueDate) }
     var editingTags by rememberSaveable(todo.id) { mutableStateOf(false) }
-    val normalizedDueDate = normalizedTodoDate(dueDateText)
-    val dateIsValid = dueDateText.isBlank() || normalizedDueDate != null
+    var editingDate by rememberSaveable(todo.id) { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             TextButton(
-                enabled = title.isNotBlank() && dateIsValid,
+                enabled = title.isNotBlank(),
                 onClick = {
                     onSave(
                         todo.copy(
                             title = title.trim(),
                             tags = draftTags,
-                            dueDate = normalizedDueDate
+                            dueDate = draftDueDate
                         )
                     )
                 }
@@ -1665,7 +1667,7 @@ private fun TodoEditorDialog(
                 Text("取消")
             }
         },
-        title = { Text("编辑待办") },
+        title = { Text(if (todo.title.isBlank()) "新建待办" else "编辑待办") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
@@ -1676,23 +1678,53 @@ private fun TodoEditorDialog(
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
                 )
-                OutlinedTextField(
-                    value = dueDateText,
-                    onValueChange = { dueDateText = it.filter { char -> char.isDigit() || char == '-' }.take(10) },
+                Row(
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("日期 yyyy-MM-dd") },
-                    singleLine = true,
-                    isError = !dateIsValid,
-                    leadingIcon = { Icon(Icons.Outlined.DateRange, contentDescription = null) }
-                )
-                TodoTagPickerButton(
-                    selectedTags = draftTags,
-                    onClick = { editingTags = true },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TodoDatePickerButton(
+                        dueDate = draftDueDate,
+                        onClick = { editingDate = true }
+                    )
+                    TodoTagPickerButton(
+                        selectedTags = draftTags,
+                        onClick = { editingTags = true }
+                    )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            draftDueDate?.let(::formatDayLabel) ?: "未安排日期",
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            if (draftTags.isEmpty()) "未添加标签" else draftTags.joinToString(" ") { "#$it" },
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
             }
         }
     )
+
+    if (editingDate) {
+        TodoDatePickerDialog(
+            initialDate = draftDueDate,
+            onDismiss = { editingDate = false },
+            onClear = {
+                draftDueDate = null
+                editingDate = false
+            },
+            onSelected = { dueDate ->
+                draftDueDate = dueDate
+                editingDate = false
+            }
+        )
+    }
 
     if (editingTags) {
         TodoTagEditDialog(
@@ -3928,7 +3960,55 @@ private fun inferTodoDate(text: String): String? {
         "今天" in text || "今晚" in text -> dayKey(todayMillis)
         "周末" in text -> nextWeekendDayKey(todayMillis)
         else -> Regex("\\d{4}-\\d{2}-\\d{2}").find(text)?.value?.let(::normalizedTodoDate)
+            ?: inferMonthDay(text)
+            ?: inferWeekday(text)
     }
+}
+
+private fun inferMonthDay(text: String): String? {
+    val match = Regex("(\\d{1,2})\\s*(?:月|/)(\\d{1,2})\\s*(?:日|号)?").find(text)
+        ?: return null
+    val month = match.groupValues[1].toIntOrNull() ?: return null
+    val day = match.groupValues[2].toIntOrNull() ?: return null
+    val calendar = java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.MONTH, month - 1)
+        set(java.util.Calendar.DAY_OF_MONTH, day)
+        set(java.util.Calendar.HOUR_OF_DAY, 12)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+        if (timeInMillis < System.currentTimeMillis() - 24 * 60 * 60 * 1000L) {
+            add(java.util.Calendar.YEAR, 1)
+        }
+    }
+    return dayKey(calendar.timeInMillis)
+}
+
+private fun inferWeekday(text: String): String? {
+    val match = Regex("(下周|本周|这周)?(?:周|星期)([一二三四五六日天])").find(text)
+        ?: return null
+    val prefix = match.groupValues[1]
+    val targetDay = when (match.groupValues[2]) {
+        "一" -> java.util.Calendar.MONDAY
+        "二" -> java.util.Calendar.TUESDAY
+        "三" -> java.util.Calendar.WEDNESDAY
+        "四" -> java.util.Calendar.THURSDAY
+        "五" -> java.util.Calendar.FRIDAY
+        "六" -> java.util.Calendar.SATURDAY
+        else -> java.util.Calendar.SUNDAY
+    }
+    val calendar = java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.HOUR_OF_DAY, 12)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+    }
+    val currentDay = calendar.get(java.util.Calendar.DAY_OF_WEEK)
+    var delta = (targetDay - currentDay + 7) % 7
+    if (prefix == "下周") delta += 7
+    if (prefix.isBlank() && delta == 0) delta = 7
+    calendar.add(java.util.Calendar.DAY_OF_YEAR, delta)
+    return dayKey(calendar.timeInMillis)
 }
 
 private fun nextWeekendDayKey(fromMillis: Long): String {
@@ -4065,6 +4145,23 @@ private fun formatClockTime(value: Long): String {
 
 private fun dayKey(value: Long): String {
     return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(value))
+}
+
+private fun utcDayKey(value: Long): String {
+    return SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    }.format(Date(value))
+}
+
+private fun dateKeyToUtcMillis(key: String): Long? {
+    return try {
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+            isLenient = false
+        }.parse(key)?.time
+    } catch (_: ParseException) {
+        null
+    }
 }
 
 private fun normalizedTodoDate(value: String): String? {
