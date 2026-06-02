@@ -115,6 +115,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -398,6 +399,9 @@ fun ProtatoApp() {
                     MainTab.Templates -> TemplateScreen(
                         templates = appState.templates,
                         selectedTemplateId = appState.selectedTemplateId,
+                        providers = appState.llmProviders,
+                        agents = appState.agents,
+                        nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
                         onSelectedTemplate = { templateId ->
                             setAppState(appState.copy(selectedTemplateId = templateId))
                         },
@@ -887,6 +891,7 @@ private fun TodoChoiceLabel(todo: TodoItem) {
             overflow = TextOverflow.Ellipsis
         )
         val metadata = buildList {
+            add("${todo.plannedPomodoros.coerceAtLeast(1)} 个番茄")
             todo.dueDate?.let { add(formatDayLabel(it)) }
             addAll(todo.tags.map { "#$it" })
         }.joinToString(" · ")
@@ -940,23 +945,32 @@ private fun TodoScreen(
 ) {
     var editingTodo by remember { mutableStateOf<TodoItem?>(null) }
     var showingAiTodo by remember { mutableStateOf(false) }
+    var showingDatePicker by rememberSaveable { mutableStateOf(false) }
+    var showingTagFilter by rememberSaveable { mutableStateOf(false) }
     var selectedTodoIds by rememberSaveable { mutableStateOf(setOf<String>()) }
     var selectedTag by rememberSaveable { mutableStateOf<String?>(null) }
     val selecting = selectedTodoIds.isNotEmpty()
     val todayKey = dayKey(System.currentTimeMillis())
+    var selectedTodoDate by rememberSaveable { mutableStateOf<String?>(todayKey) }
     val availableTags = remember(todos) {
         todos.flatMap { it.tags }
             .distinctBy { it.lowercase(Locale.getDefault()) }
             .sorted()
     }
-    val todayTodos = remember(todos, todayKey) {
-        todos.filter { it.dueDate == todayKey }
+    val availableDateKeys = remember(todos, todayKey, selectedTodoDate) {
+        (todos.mapNotNull { it.dueDate } + todayKey + listOfNotNull(selectedTodoDate))
+            .distinct()
+            .sortedDescending()
     }
-    val visibleTodos = remember(todayTodos, selectedTag) {
+    val datedTodos = remember(todos, selectedTodoDate) {
+        todos.filter { it.dueDate == selectedTodoDate }
+    }
+    val visibleTodos = remember(datedTodos, selectedTag) {
         selectedTag?.let { tag ->
-            todayTodos.filter { todo -> todo.tags.any { it.equals(tag, ignoreCase = true) } }
-        } ?: todayTodos
+            datedTodos.filter { todo -> todo.tags.any { it.equals(tag, ignoreCase = true) } }
+        } ?: datedTodos
     }
+    val dateLabel = selectedTodoDate?.let(::formatDayLabel) ?: "无日期"
 
     Column(
         modifier = Modifier
@@ -990,17 +1004,20 @@ private fun TodoScreen(
                             editingTodo = TodoItem(
                                 id = newId(),
                                 title = "",
-                                dueDate = todayKey
+                                dueDate = selectedTodoDate
                             )
                         }
                     ) {
                         Icon(Icons.Outlined.Add, contentDescription = "新建待办")
                     }
-                    OutlinedButton(onClick = { showingAiTodo = true }) {
-                        Text("AI")
+                    FilledIconButton(onClick = { showingAiTodo = true }) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_robot_svg),
+                            contentDescription = "AI 待办助手"
+                        )
                     }
                     Text(
-                        "今天 ${visibleTodos.count { !it.completed }}/${todayTodos.size}",
+                        "${dateLabel} ${visibleTodos.count { !it.completed }}/${datedTodos.size}",
                         modifier = Modifier.weight(1f),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.End,
@@ -1008,13 +1025,16 @@ private fun TodoScreen(
                     )
                 }
             }
-            if (availableTags.isNotEmpty()) {
-                TodoTagFilterBar(
-                    tags = availableTags,
-                    selectedTag = selectedTag,
-                    onSelected = { selectedTag = it }
-                )
-            }
+            TodoFilterControls(
+                dateKeys = availableDateKeys,
+                selectedDate = selectedTodoDate,
+                selectedTag = selectedTag,
+                tags = availableTags,
+                undatedCount = todos.count { it.dueDate == null },
+                onDateSelected = { selectedTodoDate = it },
+                onOpenDatePicker = { showingDatePicker = true },
+                onOpenTagFilter = { showingTagFilter = true }
+            )
         }
 
         LazyColumn(
@@ -1028,9 +1048,9 @@ private fun TodoScreen(
                 item {
                     EmptyState(
                         if (selectedTag == null) {
-                            "今天还没有待办，点 + 添加一个明确的小目标。"
+                            "${dateLabel}还没有待办，点 + 添加一个明确的小目标。"
                         } else {
-                            "今天这个标签下还没有待办。"
+                            "${dateLabel}这个标签下还没有待办。"
                         }
                     )
                 }
@@ -1079,6 +1099,33 @@ private fun TodoScreen(
             onAddTodos = { draftTodos ->
                 onAddMany(draftTodos.map { it.toTodoItem() })
                 showingAiTodo = false
+            }
+        )
+    }
+
+    if (showingDatePicker) {
+        TodoDatePickerDialog(
+            initialDate = selectedTodoDate,
+            onDismiss = { showingDatePicker = false },
+            onClear = {
+                selectedTodoDate = null
+                showingDatePicker = false
+            },
+            onSelected = { dueDate ->
+                selectedTodoDate = dueDate
+                showingDatePicker = false
+            }
+        )
+    }
+
+    if (showingTagFilter) {
+        TodoTagFilterDialog(
+            tags = availableTags,
+            selectedTag = selectedTag,
+            onDismiss = { showingTagFilter = false },
+            onSelected = { tag ->
+                selectedTag = tag
+                showingTagFilter = false
             }
         )
     }
@@ -1180,12 +1227,11 @@ private fun TodoAiDialog(
 
 @Composable
 private fun TodoDraftMetadataRow(draft: TodoDraft) {
-    if (draft.dueDate == null && draft.tags.isEmpty()) return
-
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
+        item { TodoPomodoroChip(draft.plannedPomodoros) }
         draft.dueDate?.let { dueDate ->
             item { TodoDateChip(dueDate) }
         }
@@ -1370,38 +1416,123 @@ private fun TodoDatePickerDialog(
 }
 
 @Composable
-private fun TodoTagFilterBar(
-    tags: List<String>,
+private fun TodoFilterControls(
+    dateKeys: List<String>,
+    selectedDate: String?,
     selectedTag: String?,
-    onSelected: (String?) -> Unit
+    tags: List<String>,
+    undatedCount: Int,
+    onDateSelected: (String?) -> Unit,
+    onOpenDatePicker: () -> Unit,
+    onOpenTagFilter: () -> Unit
 ) {
-    LazyRow(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        item {
-            FilterChip(
-                selected = selectedTag == null,
-                onClick = { onSelected(null) },
-                label = { Text("全部") }
-            )
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            OutlinedButton(onClick = onOpenTagFilter, modifier = Modifier.weight(1f)) {
+                Icon(Icons.Outlined.Label, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    selectedTag?.let { "#$it" } ?: "全部标签",
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(onClick = onOpenDatePicker) {
+                Icon(Icons.Outlined.DateRange, contentDescription = "选择日期")
+            }
         }
-        items(tags, key = { it }) { tag ->
-            val tagColor = todoTagColor(tag)
-            FilterChip(
-                selected = selectedTag == tag,
-                onClick = { onSelected(if (selectedTag == tag) null else tag) },
-                label = { Text("#$tag") },
-                leadingIcon = {
-                    Surface(
-                        modifier = Modifier.size(12.dp),
-                        color = tagColor,
-                        shape = RoundedCornerShape(8.dp)
-                    ) {}
-                }
+        LazyRow(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(dateKeys, key = { it }) { key ->
+                FilterChip(
+                    selected = selectedDate == key,
+                    onClick = { onDateSelected(key) },
+                    label = {
+                        Text(
+                            formatDayLabel(key),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                )
+            }
+            item {
+                FilterChip(
+                    selected = selectedDate == null,
+                    onClick = { onDateSelected(null) },
+                    label = { Text("无日期 · $undatedCount") }
+                )
+            }
+        }
+        if (tags.isEmpty() && selectedTag != null) {
+            Text(
+                "当前没有可用标签",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall
             )
         }
     }
+}
+
+@Composable
+private fun TodoTagFilterDialog(
+    tags: List<String>,
+    selectedTag: String?,
+    onDismiss: () -> Unit,
+    onSelected: (String?) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        },
+        title = { Text("筛选标签") },
+        text = {
+            LazyColumn(
+                modifier = Modifier.heightIn(max = 320.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                item {
+                    FilterChip(
+                        selected = selectedTag == null,
+                        onClick = { onSelected(null) },
+                        label = { Text("全部标签") },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                if (tags.isEmpty()) {
+                    item {
+                        Text("还没有标签。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                } else {
+                    items(tags, key = { it }) { tag ->
+                        val tagColor = todoTagColor(tag)
+                        FilterChip(
+                            selected = selectedTag == tag,
+                            onClick = { onSelected(if (selectedTag == tag) null else tag) },
+                            label = { Text("#$tag") },
+                            leadingIcon = {
+                                Surface(
+                                    modifier = Modifier.size(12.dp),
+                                    color = tagColor,
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {}
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        }
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
@@ -1485,6 +1616,7 @@ private fun TodoRow(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
+                    TodoMetadataStrip(todo = todo)
                     if (expanded) {
                         TodoExpandedDetails(todo = todo)
                     }
@@ -1495,15 +1627,23 @@ private fun TodoRow(
 }
 
 @Composable
+private fun TodoMetadataStrip(todo: TodoItem) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        item { TodoPomodoroChip(todo.plannedPomodoros) }
+        todo.dueDate?.let { dueDate ->
+            item { TodoDateChip(dueDate) }
+        }
+    }
+}
+
+@Composable
 private fun TodoExpandedDetails(todo: TodoItem) {
-    if (todo.dueDate == null && todo.tags.isEmpty()) return
+    if (todo.tags.isEmpty()) return
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        todo.dueDate?.let { dueDate ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                TodoDateChip(dueDate)
-            }
-        }
         if (todo.tags.isNotEmpty()) {
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1513,6 +1653,32 @@ private fun TodoExpandedDetails(todo: TodoItem) {
                     TodoTagChip(tag)
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun TodoPomodoroChip(count: Int) {
+    Surface(
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+        contentColor = MaterialTheme.colorScheme.primary,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_tomato),
+                contentDescription = null,
+                modifier = Modifier.size(14.dp)
+            )
+            Text(
+                "x ${count.coerceAtLeast(1)}",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold
+            )
         }
     }
 }
@@ -1630,6 +1796,41 @@ private fun TodoSelectionBar(
 }
 
 @Composable
+private fun SettingActionRow(
+    icon: ImageVector,
+    title: String,
+    value: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(
+                value,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Icon(
+            Icons.Outlined.KeyboardArrowDown,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
 private fun TodoEditorDialog(
     todo: TodoItem,
     availableTags: List<String>,
@@ -1639,8 +1840,12 @@ private fun TodoEditorDialog(
     var title by rememberSaveable(todo.id) { mutableStateOf(todo.title) }
     var draftTags by rememberSaveable(todo.id) { mutableStateOf(todo.tags) }
     var draftDueDate by rememberSaveable(todo.id) { mutableStateOf(todo.dueDate) }
+    var plannedPomodorosText by rememberSaveable(todo.id) {
+        mutableStateOf(todo.plannedPomodoros.coerceIn(1, 24).toString())
+    }
     var editingTags by rememberSaveable(todo.id) { mutableStateOf(false) }
     var editingDate by rememberSaveable(todo.id) { mutableStateOf(false) }
+    val plannedPomodoros = plannedPomodorosText.toIntOrNull()?.coerceIn(1, 24) ?: 1
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1652,7 +1857,8 @@ private fun TodoEditorDialog(
                         todo.copy(
                             title = title.trim(),
                             tags = draftTags,
-                            dueDate = draftDueDate
+                            dueDate = draftDueDate,
+                            plannedPomodoros = plannedPomodoros
                         )
                     )
                 }
@@ -1669,7 +1875,7 @@ private fun TodoEditorDialog(
         },
         title = { Text(if (todo.title.isBlank()) "新建待办" else "编辑待办") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
@@ -1678,32 +1884,52 @@ private fun TodoEditorDialog(
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
                 )
-                Row(
+                Column(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    TodoDatePickerButton(
-                        dueDate = draftDueDate,
+                    SettingActionRow(
+                        icon = Icons.Outlined.DateRange,
+                        title = "日期",
+                        value = draftDueDate?.let(::formatDayLabel) ?: "未安排日期",
                         onClick = { editingDate = true }
                     )
-                    TodoTagPickerButton(
-                        selectedTags = draftTags,
+                    SettingActionRow(
+                        icon = Icons.Outlined.Label,
+                        title = "标签",
+                        value = if (draftTags.isEmpty()) "未添加标签" else draftTags.joinToString(" ") { "#$it" },
                         onClick = { editingTags = true }
                     )
-                    Column(
-                        modifier = Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            draftDueDate?.let(::formatDayLabel) ?: "未安排日期",
-                            fontWeight = FontWeight.SemiBold
+                        Icon(
+                            painter = painterResource(R.drawable.ic_tomato),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary
                         )
-                        Text(
-                            if (draftTags.isEmpty()) "未添加标签" else draftTags.joinToString(" ") { "#$it" },
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("预计番茄", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "用于估算这条待办需要几轮专注",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        OutlinedTextField(
+                            value = plannedPomodorosText,
+                            onValueChange = { value ->
+                                plannedPomodorosText = value.filter { it.isDigit() }.take(2)
+                            },
+                            modifier = Modifier.width(84.dp),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                         )
                     }
                 }
@@ -1747,11 +1973,15 @@ private fun Set<String>.toggle(itemId: String): Set<String> {
 private fun TemplateScreen(
     templates: List<RecordTemplate>,
     selectedTemplateId: String,
+    providers: List<LlmProviderSettings>,
+    agents: List<AgentSettings>,
+    nickname: String,
     onSelectedTemplate: (String) -> Unit,
     onUpsert: (RecordTemplate) -> Unit,
     onDelete: (RecordTemplate) -> Unit
 ) {
     var editingTemplate by remember { mutableStateOf<RecordTemplate?>(null) }
+    var showingAiTemplate by remember { mutableStateOf(false) }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
@@ -1761,10 +1991,27 @@ private fun TemplateScreen(
             Header(title = "记录模板", subtitle = "自定义番茄结束后要回答的问题")
         }
         item {
-            Button(onClick = { editingTemplate = emptyTemplate() }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Outlined.Add, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("新建模板")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilledIconButton(onClick = { editingTemplate = emptyTemplate() }) {
+                    Icon(Icons.Outlined.Add, contentDescription = "新建模板")
+                }
+                FilledIconButton(onClick = { showingAiTemplate = true }) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_robot_svg),
+                        contentDescription = "AI 生成模板"
+                    )
+                }
+                Text(
+                    "${templates.size} 个模板",
+                    modifier = Modifier.weight(1f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.End,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
         items(templates, key = { it.id }) { template ->
@@ -1786,6 +2033,19 @@ private fun TemplateScreen(
             onSave = {
                 onUpsert(it)
                 editingTemplate = null
+            }
+        )
+    }
+
+    if (showingAiTemplate) {
+        TemplateAiDialog(
+            providers = providers,
+            agents = agents,
+            nickname = nickname,
+            onDismiss = { showingAiTemplate = false },
+            onAddTemplate = { template ->
+                onUpsert(template)
+                showingAiTemplate = false
             }
         )
     }
@@ -1811,11 +2071,21 @@ private fun TemplateCard(
             }
         )
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(template.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text("${template.fields.size} 个字段", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        template.name,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "${template.fields.size} 个步骤",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
                 }
                 if (selected) {
                     AssistChip(onClick = onSelect, label = { Text("默认") }, leadingIcon = {
@@ -1827,11 +2097,23 @@ private fun TemplateCard(
                     }
                 }
             }
-            template.fields.forEach { field ->
-                Text(
-                    text = "${field.title} · ${field.type.label()}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                template.fields.forEachIndexed { index, field ->
+                    Text(
+                        text = "${index + 1}. ${field.title} · ${field.type.label()}",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onEdit) {
@@ -1969,6 +2251,102 @@ private fun TemplateEditorDialog(
 }
 
 @Composable
+private fun TemplateAiDialog(
+    providers: List<LlmProviderSettings>,
+    agents: List<AgentSettings>,
+    nickname: String,
+    onDismiss: () -> Unit,
+    onAddTemplate: (RecordTemplate) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var rawInput by remember { mutableStateOf("") }
+    var suggestion by remember { mutableStateOf<RecordTemplate?>(null) }
+    var loading by remember { mutableStateOf(false) }
+    var errorText by remember { mutableStateOf<String?>(null) }
+    val agent = selectTemplateAgent(agents)
+    val provider = agent?.providerId?.let { id -> providers.firstOrNull { it.id == id } }
+        ?: providers.firstOrNull { it.isConfiguredForChat() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                enabled = suggestion != null,
+                onClick = { suggestion?.let(onAddTemplate) }
+            ) {
+                Text("添加模板")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        },
+        title = { Text("AI 生成模板") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedTextField(
+                    value = rawInput,
+                    onValueChange = { rawInput = it.take(1200) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("描述你想复盘什么") },
+                    minLines = 4
+                )
+                OutlinedButton(
+                    enabled = rawInput.isNotBlank() && !loading,
+                    onClick = {
+                        scope.launch {
+                            loading = true
+                            errorText = null
+                            suggestion = runCatching {
+                                if (agent != null && provider != null && provider.isConfiguredForChat()) {
+                                    generateTemplateSuggestion(rawInput, agent, provider, nickname)
+                                } else {
+                                    localTemplateSuggestion(rawInput)
+                                }
+                            }.getOrElse { error ->
+                                errorText = error.message ?: "生成失败"
+                                localTemplateSuggestion(rawInput)
+                            }
+                            loading = false
+                        }
+                    }
+                ) {
+                    Text(if (loading) "生成中" else "生成模板")
+                }
+                errorText?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                suggestion?.let { template ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(template.name, fontWeight = FontWeight.Bold)
+                            template.fields.forEachIndexed { index, field ->
+                                Text(
+                                    "${index + 1}. ${field.title} · ${field.type.label()}",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    )
+}
+
+@Composable
 private fun FieldEditorRow(field: TemplateField, onDelete: () -> Unit) {
     Row(
         modifier = Modifier
@@ -2012,13 +2390,14 @@ private fun RecordsScreen(
     var editingRecord by remember { mutableStateOf<PomodoroRecord?>(null) }
     var viewingSummary by remember { mutableStateOf<DailySummary?>(null) }
     var generatingSummary by remember { mutableStateOf(false) }
+    var choosingRecordDate by rememberSaveable { mutableStateOf(false) }
     val todayKey = dayKey(System.currentTimeMillis())
-    val availableDayKeys = remember(records, summaries, todayKey) {
-        (records.map { dayKey(it.endedAt) } + summaries.map { it.dayKey } + todayKey)
+    var selectedDayKey by rememberSaveable { mutableStateOf(todayKey) }
+    val availableDayKeys = remember(records, summaries, todayKey, selectedDayKey) {
+        (records.map { dayKey(it.endedAt) } + summaries.map { it.dayKey } + todayKey + selectedDayKey)
             .distinct()
             .sortedDescending()
     }
-    var selectedDayKey by rememberSaveable { mutableStateOf(todayKey) }
     val effectiveSelectedDayKey = selectedDayKey
         .takeIf { it in availableDayKeys }
         ?: availableDayKeys.firstOrNull()
@@ -2047,7 +2426,8 @@ private fun RecordsScreen(
                     dayKeys = availableDayKeys,
                     selectedDayKey = effectiveSelectedDayKey,
                     records = records,
-                    onSelected = { selectedDayKey = it }
+                    onSelected = { selectedDayKey = it },
+                    onOpenDatePicker = { choosingRecordDate = true }
                 )
             }
             item {
@@ -2121,6 +2501,21 @@ private fun RecordsScreen(
         viewingSummary?.let { summary ->
             DailySummaryDialog(summary = summary, onDismiss = { viewingSummary = null })
         }
+
+        if (choosingRecordDate) {
+            TodoDatePickerDialog(
+                initialDate = effectiveSelectedDayKey,
+                onDismiss = { choosingRecordDate = false },
+                onClear = {
+                    selectedDayKey = todayKey
+                    choosingRecordDate = false
+                },
+                onSelected = { day ->
+                    selectedDayKey = day
+                    choosingRecordDate = false
+                }
+            )
+        }
     }
 }
 
@@ -2129,28 +2524,35 @@ private fun DaySwitcher(
     dayKeys: List<String>,
     selectedDayKey: String,
     records: List<PomodoroRecord>,
-    onSelected: (String) -> Unit
+    onSelected: (String) -> Unit,
+    onOpenDatePicker: () -> Unit
 ) {
-    LazyRow(
+    Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        items(dayKeys, key = { it }) { key ->
-            val count = records.count { dayKey(it.endedAt) == key }
-            FilterChip(
-                selected = selectedDayKey == key,
-                onClick = { onSelected(key) },
-                label = {
-                    Text(
-                        "${formatDayLabel(key)} · $count",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
-                leadingIcon = {
-                    Text(if (key == dayKey(System.currentTimeMillis())) "☀️" else "📅")
-                }
-            )
+        IconButton(onClick = onOpenDatePicker) {
+            Icon(Icons.Outlined.DateRange, contentDescription = "选择记录日期")
+        }
+        LazyRow(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(dayKeys, key = { it }) { key ->
+                val count = records.count { dayKey(it.endedAt) == key }
+                FilterChip(
+                    selected = selectedDayKey == key,
+                    onClick = { onSelected(key) },
+                    label = {
+                        Text(
+                            "${formatDayLabel(key)} · $count",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                )
+            }
         }
     }
 }
@@ -3709,14 +4111,16 @@ private data class PendingRecord(
 private data class TodoDraft(
     val title: String,
     val dueDate: String? = null,
-    val tags: List<String> = emptyList()
+    val tags: List<String> = emptyList(),
+    val plannedPomodoros: Int = 1
 ) {
     fun toTodoItem(): TodoItem {
         return TodoItem(
             id = newId(),
             title = title.trim(),
             dueDate = dueDate,
-            tags = tags
+            tags = tags,
+            plannedPomodoros = plannedPomodoros.coerceIn(1, 24)
         )
     }
 }
@@ -3773,6 +4177,12 @@ private fun selectDailySummaryAgent(agents: List<AgentSettings>): AgentSettings?
 private fun selectTodoAgent(agents: List<AgentSettings>): AgentSettings? {
     val enabledAgents = agents.filter { it.enabled }
     return enabledAgents.firstOrNull { it.permissions.todos }
+        ?: enabledAgents.firstOrNull()
+}
+
+private fun selectTemplateAgent(agents: List<AgentSettings>): AgentSettings? {
+    val enabledAgents = agents.filter { it.enabled }
+    return enabledAgents.firstOrNull { it.permissions.templates }
         ?: enabledAgents.firstOrNull()
 }
 
@@ -3880,9 +4290,10 @@ private suspend fun generateTodoSuggestions(
         append(agent.prompt.withNickname(nickname))
         append("\n你是 Protato 的待办整理助手。把用户随口说出的计划整理成短小、明确、可执行的 Todo。")
         append(" 今天日期是 $today。")
-        append(" 只输出待办列表，每行一个，格式严格为：任务标题 | yyyy-MM-dd 或 空 | 标签1,标签2。")
+        append(" 只输出待办列表，每行一个，格式严格为：任务标题 | yyyy-MM-dd 或 空 | 标签1,标签2 | 番茄数。")
         append(" 日期要根据今天、明天、周末、具体日期等信息推断；没有日期就留空。")
         append(" 标签要自动选择 1-3 个短标签，例如 工作、学习、生活、健康、沟通、复盘。不要输出解释。")
+        append(" 番茄数是预计专注轮数，通常 1-6。")
     }
     val response = requestLlmChat(
         provider = provider,
@@ -3892,6 +4303,102 @@ private suspend fun generateTodoSuggestions(
         )
     )
     return parseTodoSuggestions(response).ifEmpty { parseTodoSuggestions(rawInput) }
+}
+
+private suspend fun generateTemplateSuggestion(
+    rawInput: String,
+    agent: AgentSettings,
+    provider: LlmProviderSettings,
+    nickname: String
+): RecordTemplate {
+    val systemPrompt = buildString {
+        append(agent.prompt.withNickname(nickname))
+        append("\n你是 Protato 的番茄复盘模板生成助手。根据用户描述生成一个简洁、可执行的记录模板。")
+        append(" 第一行格式严格为：模板名称 | 名称。")
+        append(" 后续每行格式严格为：字段 | 标题 | short 或 single | required 或 optional | 选项1,选项2。")
+        append(" short 表示简答，single 表示单选；single 必须给 2-5 个选项。不要输出解释。")
+    }
+    val response = requestLlmChat(
+        provider = provider,
+        messages = listOf(
+            LlmChatMessage("system", systemPrompt),
+            LlmChatMessage("user", rawInput)
+        )
+    )
+    return parseTemplateSuggestion(response) ?: localTemplateSuggestion(rawInput)
+}
+
+private fun parseTemplateSuggestion(text: String): RecordTemplate? {
+    val lines = text.lines()
+        .map { it.trim().trim('-', '*', '•', ' ') }
+        .filter { it.isNotBlank() }
+    val name = lines.firstNotNullOfOrNull { line ->
+        val parts = line.split("|").map { it.trim() }
+        when {
+            parts.size >= 2 && parts[0].contains("模板") -> parts[1]
+            line.startsWith("模板名称") -> line.substringAfter("：", line.substringAfter(":")).trim()
+            else -> null
+        }
+    }?.take(24)?.ifBlank { null } ?: return null
+    val fields = lines.mapNotNull { line ->
+        val parts = line.split("|").map { it.trim() }
+        if (parts.size < 4 || !parts[0].contains("字段")) return@mapNotNull null
+        val type = when (parts.getOrNull(2)?.lowercase(Locale.getDefault())) {
+            "single", "单选" -> FieldType.SingleChoice
+            else -> FieldType.ShortAnswer
+        }
+        val options = if (type == FieldType.SingleChoice) {
+            parseTodoTags(parts.getOrNull(4).orEmpty()).take(5)
+        } else {
+            emptyList()
+        }
+        if (type == FieldType.SingleChoice && options.size < 2) return@mapNotNull null
+        TemplateField(
+            id = newId(),
+            title = parts[1].take(40),
+            type = type,
+            options = options,
+            required = parts.getOrNull(3)?.contains("required", ignoreCase = true) == true ||
+                parts.getOrNull(3)?.contains("必填") == true
+        )
+    }.filter { it.title.isNotBlank() }.take(8)
+    return if (fields.isEmpty()) null else RecordTemplate(
+        id = newId(),
+        name = name,
+        fields = fields
+    )
+}
+
+private fun localTemplateSuggestion(rawInput: String): RecordTemplate {
+    val topic = rawInput.lineSequence().firstOrNull { it.isNotBlank() }
+        ?.cleanTodoTitle()
+        ?.take(12)
+        ?.ifBlank { null }
+        ?: "自定义复盘"
+    return RecordTemplate(
+        id = newId(),
+        name = "${topic}模板",
+        fields = listOf(
+            TemplateField(
+                id = newId(),
+                title = "这轮完成了什么",
+                type = FieldType.ShortAnswer,
+                required = true
+            ),
+            TemplateField(
+                id = newId(),
+                title = "专注状态",
+                type = FieldType.SingleChoice,
+                options = listOf("顺畅", "一般", "分心", "被打断"),
+                required = true
+            ),
+            TemplateField(
+                id = newId(),
+                title = "下一步行动",
+                type = FieldType.ShortAnswer
+            )
+        )
+    )
 }
 
 private fun parseTodoSuggestions(text: String): List<TodoDraft> {
@@ -3914,12 +4421,15 @@ private fun parseTodoDraftLine(line: String): TodoDraft {
     if (structuredParts.size >= 3) {
         val title = structuredParts[0].cleanTodoTitle()
         val dueDate = normalizedTodoDate(structuredParts[1])
-        val tags = parseTodoTags(structuredParts.drop(2).joinToString(","))
+        val tags = parseTodoTags(structuredParts[2])
             .ifEmpty { inferTodoTags(title) }
+        val plannedPomodoros = structuredParts.getOrNull(3)?.let(::parsePomodoroCount)
+            ?: inferPlannedPomodoros(title)
         return TodoDraft(
             title = title,
             dueDate = dueDate ?: inferTodoDate(line),
-            tags = tags
+            tags = tags,
+            plannedPomodoros = plannedPomodoros
         )
     }
 
@@ -3930,7 +4440,8 @@ private fun parseTodoDraftLine(line: String): TodoDraft {
     return TodoDraft(
         title = title,
         dueDate = inferTodoDate(line),
-        tags = tags.ifEmpty { inferTodoTags(title) }
+        tags = tags.ifEmpty { inferTodoTags(title) },
+        plannedPomodoros = parsePomodoroCount(line) ?: inferPlannedPomodoros(title)
     )
 }
 
@@ -4032,6 +4543,27 @@ private fun inferTodoTags(title: String): List<String> {
         else -> "待办"
     }
     return listOf(tag)
+}
+
+private fun parsePomodoroCount(text: String): Int? {
+    val trimmed = text.trim()
+    trimmed.toIntOrNull()?.let { return it.coerceIn(1, 24) }
+    return Regex("(\\d{1,2})\\s*(?:个|轮|次)?\\s*(?:番茄|pomodoro)", RegexOption.IGNORE_CASE)
+        .find(text)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.toIntOrNull()
+        ?.coerceIn(1, 24)
+}
+
+private fun inferPlannedPomodoros(title: String): Int {
+    val lowered = title.lowercase(Locale.getDefault())
+    return when {
+        listOf("方案", "报告", "论文", "开发", "重构", "复习", "整理资料").any { it in lowered } -> 4
+        listOf("文档", "课程", "练习", "设计", "总结").any { it in lowered } -> 3
+        listOf("会议", "阅读", "沟通", "邮件").any { it in lowered } -> 2
+        else -> 1
+    }
 }
 
 private suspend fun generateAiEncouragement(

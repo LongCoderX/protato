@@ -16,7 +16,8 @@ data class TodoItem(
     val completed: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val tags: List<String> = emptyList(),
-    val dueDate: String? = null
+    val dueDate: String? = null,
+    val plannedPomodoros: Int = 1
 )
 
 data class TemplateField(

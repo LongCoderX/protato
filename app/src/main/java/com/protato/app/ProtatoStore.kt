@@ -72,7 +72,8 @@ private fun JSONArray.toTodos(): List<TodoItem> = mapObjects { item ->
         completed = item.optBoolean("completed"),
         createdAt = item.optLong("createdAt", System.currentTimeMillis()),
         tags = item.optJSONArray("tags")?.toStringList().orEmpty(),
-        dueDate = item.optString("dueDate").takeIf { it.isNotBlank() }
+        dueDate = item.optString("dueDate").takeIf { it.isNotBlank() },
+        plannedPomodoros = item.optInt("plannedPomodoros", 1).coerceIn(1, 24)
     )
 }.filter { it.id.isNotBlank() && it.title.isNotBlank() }
 
@@ -224,6 +225,7 @@ private fun TodoItem.toJson(): JSONObject = JSONObject()
     .put("createdAt", createdAt)
     .put("tags", tags.toJsonArray { it })
     .put("dueDate", dueDate ?: "")
+    .put("plannedPomodoros", plannedPomodoros)
 
 private fun RecordTemplate.toJson(): JSONObject = JSONObject()
     .put("id", id)
