@@ -31,30 +31,30 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.List
+import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.List
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.RadioButtonChecked
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Timer
-import androidx.compose.material.icons.outlined.ViewList
 import androidx.compose.material.icons.outlined.WorkHistory
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.Divider
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -131,8 +131,8 @@ class MainActivity : ComponentActivity() {
 
 private enum class MainTab(val label: String, val icon: ImageVector) {
     Focus("专注", Icons.Outlined.Timer),
-    Todo("待办", Icons.Outlined.List),
-    Templates("模板", Icons.Outlined.ViewList),
+    Todo("待办", Icons.AutoMirrored.Outlined.List),
+    Templates("模板", Icons.AutoMirrored.Outlined.ViewList),
     Records("记录", Icons.Outlined.WorkHistory)
 }
 
@@ -770,16 +770,18 @@ private fun TodoRow(
     onToggleSelected: () -> Unit,
     onLongPress: () -> Unit
 ) {
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { value ->
-            when (value) {
-                SwipeToDismissBoxValue.EndToStart -> onDelete()
-                SwipeToDismissBoxValue.StartToEnd -> onEdit()
-                SwipeToDismissBoxValue.Settled -> Unit
+    val dismissState = rememberSwipeToDismissBoxState()
+
+    LaunchedEffect(dismissState.currentValue) {
+        when (dismissState.currentValue) {
+            SwipeToDismissBoxValue.EndToStart -> onDelete()
+            SwipeToDismissBoxValue.StartToEnd -> {
+                onEdit()
+                dismissState.snapTo(SwipeToDismissBoxValue.Settled)
             }
-            false
+            SwipeToDismissBoxValue.Settled -> Unit
         }
-    )
+    }
 
     SwipeToDismissBox(
         state = dismissState,
@@ -1091,7 +1093,7 @@ private fun TemplateEditorDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
-                Divider()
+                HorizontalDivider()
                 Text("字段", fontWeight = FontWeight.SemiBold)
                 fields.forEach { field ->
                     FieldEditorRow(
@@ -1379,7 +1381,7 @@ private fun RecordEditDialog(
                     fallbackTodoTitle = record.todoTitle.takeIf { originalTodoStillSelected && selectedTodo == null },
                     onSelected = { selectedTodoId = it }
                 )
-                Divider()
+                HorizontalDivider()
                 RecordAnswerFields(template = editableTemplate, answers = answers)
             }
         }
