@@ -334,7 +334,15 @@ fun ProtatoApp() {
 
                     MainTab.Records -> RecordsScreen(
                         records = appState.records,
-                        templates = appState.templates
+                        templates = appState.templates,
+                        todos = appState.todos,
+                        onUpdateRecord = { updatedRecord ->
+                            appState = appState.copy(
+                                records = appState.records.map { record ->
+                                    if (record.id == updatedRecord.id) updatedRecord else record
+                                }
+                            )
+                        }
                     )
                 }
             }
@@ -946,29 +954,57 @@ private fun FieldEditorRow(field: TemplateField, onDelete: () -> Unit) {
 }
 
 @Composable
-private fun RecordsScreen(records: List<PomodoroRecord>, templates: List<RecordTemplate>) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            Header(title = "番茄记录", subtitle = "每次专注结束后的完整内容会沉淀在这里")
-        }
-        if (records.isEmpty()) {
+private fun RecordsScreen(
+    records: List<PomodoroRecord>,
+    templates: List<RecordTemplate>,
+    todos: List<TodoItem>,
+    onUpdateRecord: (PomodoroRecord) -> Unit
+) {
+    var editingRecord by remember { mutableStateOf<PomodoroRecord?>(null) }
+
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
             item {
-                EmptyState("完成一轮专注后，记录会出现在这里。")
+                Header(title = "番茄记录", subtitle = "每次专注结束后的完整内容会沉淀在这里")
             }
-        } else {
-            items(records, key = { it.id }) { record ->
-                RecordCard(record = record, template = templates.firstOrNull { it.id == record.templateId })
+            if (records.isEmpty()) {
+                item {
+                    EmptyState("完成一轮专注后，记录会出现在这里。")
+                }
+            } else {
+                items(records, key = { it.id }) { record ->
+                    RecordCard(
+                        record = record,
+                        template = templates.firstOrNull { it.id == record.templateId },
+                        onEdit = { editingRecord = record }
+                    )
+                }
             }
+        }
+
+        editingRecord?.let { record ->
+            val template = templates.firstOrNull { it.id == record.templateId }
+                ?: RecordTemplate(record.templateId, record.templateName, emptyList())
+            RecordEditDialog(
+                record = record,
+                template = template,
+                todos = todos,
+                onDismiss = { editingRecord = null },
+                onSave = { updatedRecord ->
+                    onUpdateRecord(updatedRecord)
+                    editingRecord = null
+                }
+            )
         }
     }
 }
 
 @Composable
-private fun RecordCard(record: PomodoroRecord, template: RecordTemplate?) {
+private fun RecordCard(record: PomodoroRecord, template: RecordTemplate?, onEdit: () -> Unit) {
     ElevatedCard(shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -978,6 +1014,9 @@ private fun RecordCard(record: PomodoroRecord, template: RecordTemplate?) {
                         "${record.focusMinutes} 分钟 · ${formatTime(record.endedAt)} · ${record.templateName}",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Outlined.Edit, contentDescription = "编辑记录")
                 }
             }
             record.answers.forEach { answer ->
@@ -999,9 +1038,7 @@ private fun RecordDialog(
     onSave: (List<FieldAnswer>) -> Unit
 ) {
     val answers = remember(template.id) { mutableStateMapOf<String, String>() }
-    val missingRequired = template.fields.any { field ->
-        field.required && answers[field.id].orEmpty().isBlank()
-    }
+    val missingRequired = hasMissingRequiredAnswers(template, answers)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1028,38 +1065,162 @@ private fun RecordDialog(
                     "${pendingRecord.todoTitle} · ${pendingRecord.focusMinutes} 分钟",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                template.fields.forEach { field ->
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text(
-                            text = if (field.required) "${field.title} *" else field.title,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        when (field.type) {
-                            FieldType.SingleChoice -> field.options.forEach { option ->
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    RadioButton(
-                                        selected = answers[field.id] == option,
-                                        onClick = { answers[field.id] = option }
-                                    )
-                                    Text(option)
-                                }
-                            }
-
-                            FieldType.ShortAnswer -> OutlinedTextField(
-                                value = answers[field.id].orEmpty(),
-                                onValueChange = { answers[field.id] = it },
-                                modifier = Modifier.fillMaxWidth(),
-                                minLines = 2
-                            )
-                        }
-                    }
-                }
+                RecordAnswerFields(template = template, answers = answers)
             }
         }
     )
+}
+
+@Composable
+private fun RecordEditDialog(
+    record: PomodoroRecord,
+    template: RecordTemplate,
+    todos: List<TodoItem>,
+    onDismiss: () -> Unit,
+    onSave: (PomodoroRecord) -> Unit
+) {
+    var selectedTodoId by rememberSaveable(record.id) { mutableStateOf(record.todoId) }
+    val answers = remember(record.id, template.id) {
+        mutableStateMapOf<String, String>().apply {
+            record.answers.forEach { answer -> put(answer.fieldId, answer.value) }
+        }
+    }
+    val editableFields = template.fields.ifEmpty {
+        record.answers.mapIndexed { index, answer ->
+            TemplateField(
+                id = answer.fieldId,
+                title = "字段 ${index + 1}",
+                type = FieldType.ShortAnswer
+            )
+        }
+    }
+    val editableTemplate = template.copy(fields = editableFields)
+    val missingRequired = hasMissingRequiredAnswers(editableTemplate, answers)
+    val selectedTodo = todos.firstOrNull { it.id == selectedTodoId }
+    val originalTodoStillSelected = selectedTodoId == record.todoId && selectedTodoId != null
+    val updatedTodoTitle = when {
+        selectedTodo != null -> selectedTodo.title
+        originalTodoStillSelected -> record.todoTitle
+        else -> "未绑定任务"
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                enabled = !missingRequired,
+                onClick = {
+                    onSave(
+                        record.copy(
+                            todoId = selectedTodo?.id ?: selectedTodoId.takeIf { originalTodoStillSelected },
+                            todoTitle = updatedTodoTitle,
+                            answers = editableTemplate.fields.map {
+                                FieldAnswer(it.id, answers[it.id].orEmpty().trim())
+                            }
+                        )
+                    )
+                }
+            ) {
+                Icon(Icons.Outlined.Save, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("保存修改")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+        title = { Text("编辑记录") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Text(
+                    "${record.focusMinutes} 分钟 · ${formatTime(record.endedAt)} · ${record.templateName}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                RecordTodoSelector(
+                    todos = todos,
+                    selectedTodoId = selectedTodoId,
+                    fallbackTodoTitle = record.todoTitle.takeIf { originalTodoStillSelected && selectedTodo == null },
+                    onSelected = { selectedTodoId = it }
+                )
+                Divider()
+                RecordAnswerFields(template = editableTemplate, answers = answers)
+            }
+        }
+    )
+}
+
+@Composable
+private fun RecordTodoSelector(
+    todos: List<TodoItem>,
+    selectedTodoId: String?,
+    fallbackTodoTitle: String?,
+    onSelected: (String?) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("绑定任务", fontWeight = FontWeight.SemiBold)
+        if (todos.isEmpty() && fallbackTodoTitle == null) {
+            Text("还没有可绑定的待办。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        } else {
+            FilterChip(
+                selected = selectedTodoId == null,
+                onClick = { onSelected(null) },
+                label = { Text("不绑定") }
+            )
+            if (fallbackTodoTitle != null) {
+                FilterChip(
+                    selected = true,
+                    onClick = { },
+                    label = { Text(fallbackTodoTitle) }
+                )
+            }
+            todos.forEach { todo ->
+                FilterChip(
+                    selected = selectedTodoId == todo.id,
+                    onClick = { onSelected(todo.id) },
+                    label = { Text(todo.title) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecordAnswerFields(
+    template: RecordTemplate,
+    answers: androidx.compose.runtime.snapshots.SnapshotStateMap<String, String>
+) {
+    template.fields.forEach { field ->
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(
+                text = if (field.required) "${field.title} *" else field.title,
+                fontWeight = FontWeight.SemiBold
+            )
+            when (field.type) {
+                FieldType.SingleChoice -> field.options.forEach { option ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        RadioButton(
+                            selected = answers[field.id] == option,
+                            onClick = { answers[field.id] = option }
+                        )
+                        Text(option)
+                    }
+                }
+
+                FieldType.ShortAnswer -> OutlinedTextField(
+                    value = answers[field.id].orEmpty(),
+                    onValueChange = { answers[field.id] = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -1107,6 +1268,15 @@ private fun TimerMode.label(): String = when (this) {
 private fun FieldType.label(): String = when (this) {
     FieldType.SingleChoice -> "单选"
     FieldType.ShortAnswer -> "简答"
+}
+
+private fun hasMissingRequiredAnswers(
+    template: RecordTemplate,
+    answers: Map<String, String>
+): Boolean {
+    return template.fields.any { field ->
+        field.required && answers[field.id].orEmpty().isBlank()
+    }
 }
 
 fun Int.asClock(): String {
