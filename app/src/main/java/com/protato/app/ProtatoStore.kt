@@ -25,6 +25,7 @@ class ProtatoStore(context: Context) {
                 todos = root.optJSONArray("todos")?.toTodos().orEmpty(),
                 templates = templates.ifEmpty { listOf(defaultTemplate()) },
                 records = root.optJSONArray("records")?.toRecords().orEmpty(),
+                dailySummaries = root.optJSONArray("dailySummaries")?.toDailySummaries().orEmpty(),
                 focusMinutes = root.optInt("focusMinutes", 25).coerceIn(1, 180),
                 restMinutes = root.optInt(
                     "restMinutes",
@@ -50,6 +51,7 @@ class ProtatoStore(context: Context) {
             .put("todos", state.todos.toJsonArray { it.toJson() })
             .put("templates", state.templates.toJsonArray { it.toJson() })
             .put("records", state.records.toJsonArray { it.toJson() })
+            .put("dailySummaries", state.dailySummaries.toJsonArray { it.toJson() })
             .put("focusMinutes", state.focusMinutes)
             .put("restMinutes", state.restMinutes)
             .put("selectedTemplateId", state.selectedTemplateId)
@@ -105,6 +107,17 @@ private fun JSONArray.toRecords(): List<PomodoroRecord> = mapObjects { item ->
         answers = item.optJSONArray("answers")?.toAnswers().orEmpty()
     )
 }.filter { it.id.isNotBlank() }
+
+private fun JSONArray.toDailySummaries(): List<DailySummary> = mapObjects { item ->
+    DailySummary(
+        dayKey = item.optString("dayKey"),
+        generatedAt = item.optLong("generatedAt"),
+        title = item.optString("title"),
+        content = item.optString("content"),
+        pomodoroCount = item.optInt("pomodoroCount"),
+        focusMinutes = item.optInt("focusMinutes")
+    )
+}.filter { it.dayKey.isNotBlank() && it.content.isNotBlank() }
 
 private fun JSONArray.toAnswers(): List<FieldAnswer> = mapObjects { item ->
     FieldAnswer(
@@ -230,6 +243,14 @@ private fun PomodoroRecord.toJson(): JSONObject = JSONObject()
     .put("endedAt", endedAt)
     .put("focusMinutes", focusMinutes)
     .put("answers", answers.toJsonArray { it.toJson() })
+
+private fun DailySummary.toJson(): JSONObject = JSONObject()
+    .put("dayKey", dayKey)
+    .put("generatedAt", generatedAt)
+    .put("title", title)
+    .put("content", content)
+    .put("pomodoroCount", pomodoroCount)
+    .put("focusMinutes", focusMinutes)
 
 private fun FieldAnswer.toJson(): JSONObject = JSONObject()
     .put("fieldId", fieldId)

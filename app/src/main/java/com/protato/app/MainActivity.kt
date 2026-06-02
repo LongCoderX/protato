@@ -6,6 +6,11 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -97,6 +102,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -336,6 +343,9 @@ fun ProtatoApp() {
 
                     MainTab.Todo -> TodoScreen(
                         todos = appState.todos,
+                        providers = appState.llmProviders,
+                        agents = appState.agents,
+                        nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
                         onAdd = { title ->
                             setAppState(appState.copy(
                                 todos = listOf(
@@ -366,6 +376,16 @@ fun ProtatoApp() {
                                 todos = appState.todos.filterNot { it.id in itemIds }
                             ))
                             if (selectedTodoId in itemIds) selectedTodoId = null
+                        },
+                        onAddMany = { titles ->
+                            val newTodos = titles
+                                .map { it.trim() }
+                                .filter { it.isNotBlank() }
+                                .distinct()
+                                .map { TodoItem(id = newId(), title = it) }
+                            if (newTodos.isNotEmpty()) {
+                                setAppState(appState.copy(todos = newTodos + appState.todos))
+                            }
                         }
                     )
 
@@ -400,6 +420,7 @@ fun ProtatoApp() {
 
                     MainTab.Records -> RecordsScreen(
                         records = appState.records,
+                        summaries = appState.dailySummaries,
                         templates = appState.templates,
                         todos = appState.todos,
                         providers = appState.llmProviders,
@@ -411,6 +432,12 @@ fun ProtatoApp() {
                                     if (record.id == updatedRecord.id) updatedRecord else record
                                 }
                             ))
+                        },
+                        onSaveSummary = { summary ->
+                            val summaries = listOf(summary) + appState.dailySummaries.filterNot {
+                                it.dayKey == summary.dayKey
+                            }
+                            setAppState(appState.copy(dailySummaries = summaries))
                         }
                     )
 
@@ -875,14 +902,19 @@ private fun TimerRing(progress: Float) {
 @Composable
 private fun TodoScreen(
     todos: List<TodoItem>,
+    providers: List<LlmProviderSettings>,
+    agents: List<AgentSettings>,
+    nickname: String,
     onAdd: (String) -> Unit,
     onToggle: (TodoItem) -> Unit,
     onDelete: (TodoItem) -> Unit,
     onUpdate: (TodoItem) -> Unit,
-    onDeleteMany: (Set<String>) -> Unit
+    onDeleteMany: (Set<String>) -> Unit,
+    onAddMany: (List<String>) -> Unit
 ) {
     var title by rememberSaveable { mutableStateOf("") }
     var editingTodo by remember { mutableStateOf<TodoItem?>(null) }
+    var showingAiTodo by remember { mutableStateOf(false) }
     var selectedTodoIds by rememberSaveable { mutableStateOf(setOf<String>()) }
     val selecting = selectedTodoIds.isNotEmpty()
 
@@ -930,6 +962,9 @@ private fun TodoScreen(
                     ) {
                         Icon(Icons.Outlined.Add, contentDescription = "添加")
                     }
+                    OutlinedButton(onClick = { showingAiTodo = true }) {
+                        Text("AI")
+                    }
                 }
             }
         }
@@ -975,6 +1010,108 @@ private fun TodoScreen(
             }
         )
     }
+
+    if (showingAiTodo) {
+        TodoAiDialog(
+            providers = providers,
+            agents = agents,
+            nickname = nickname,
+            onDismiss = { showingAiTodo = false },
+            onAddTodos = { titles ->
+                onAddMany(titles)
+                showingAiTodo = false
+            }
+        )
+    }
+}
+
+@Composable
+private fun TodoAiDialog(
+    providers: List<LlmProviderSettings>,
+    agents: List<AgentSettings>,
+    nickname: String,
+    onDismiss: () -> Unit,
+    onAddTodos: (List<String>) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    var rawInput by remember { mutableStateOf("") }
+    var suggestions by remember { mutableStateOf<List<String>>(emptyList()) }
+    var loading by remember { mutableStateOf(false) }
+    var errorText by remember { mutableStateOf<String?>(null) }
+    val agent = selectTodoAgent(agents)
+    val provider = agent?.providerId?.let { id -> providers.firstOrNull { it.id == id } }
+        ?: providers.firstOrNull { it.isConfiguredForChat() }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                enabled = suggestions.isNotEmpty(),
+                onClick = { onAddTodos(suggestions) }
+            ) {
+                Text("添加待办")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        },
+        title = { Text("AI 待办助手") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                OutlinedTextField(
+                    value = rawInput,
+                    onValueChange = { rawInput = it.take(1200) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("今天要做的事") },
+                    minLines = 4
+                )
+                OutlinedButton(
+                    enabled = rawInput.isNotBlank() && !loading,
+                    onClick = {
+                        scope.launch {
+                            loading = true
+                            errorText = null
+                            suggestions = runCatching {
+                                if (agent != null && provider != null && provider.isConfiguredForChat()) {
+                                    generateTodoSuggestions(rawInput, agent, provider, nickname)
+                                } else {
+                                    parseTodoSuggestions(rawInput)
+                                }
+                            }.getOrElse { error ->
+                                errorText = error.message ?: "生成失败"
+                                parseTodoSuggestions(rawInput)
+                            }
+                            loading = false
+                        }
+                    }
+                ) {
+                    Text(if (loading) "整理中" else "整理待办")
+                }
+                errorText?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                suggestions.forEach { suggestion ->
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text(
+                            suggestion,
+                            modifier = Modifier.padding(10.dp),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
@@ -1411,15 +1548,22 @@ private fun FieldEditorRow(field: TemplateField, onDelete: () -> Unit) {
 @Composable
 private fun RecordsScreen(
     records: List<PomodoroRecord>,
+    summaries: List<DailySummary>,
     templates: List<RecordTemplate>,
     todos: List<TodoItem>,
     providers: List<LlmProviderSettings>,
     agents: List<AgentSettings>,
     nickname: String,
-    onUpdateRecord: (PomodoroRecord) -> Unit
+    onUpdateRecord: (PomodoroRecord) -> Unit,
+    onSaveSummary: (DailySummary) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     var editingRecord by remember { mutableStateOf<PomodoroRecord?>(null) }
-    var chattingRecord by remember { mutableStateOf<PomodoroRecord?>(null) }
+    var viewingSummary by remember { mutableStateOf<DailySummary?>(null) }
+    var generatingSummary by remember { mutableStateOf(false) }
+    val todayKey = dayKey(System.currentTimeMillis())
+    val todayRecords = records.filter { dayKey(it.endedAt) == todayKey }
+    val todaySummary = summaries.firstOrNull { it.dayKey == todayKey }
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -1430,6 +1574,34 @@ private fun RecordsScreen(
             item {
                 Header(title = "番茄记录", subtitle = "每次专注结束后的完整内容会沉淀在这里")
             }
+            item {
+                DailySummaryCard(
+                    records = todayRecords,
+                    summary = todaySummary,
+                    loading = generatingSummary,
+                    onGenerate = {
+                        scope.launch {
+                            generatingSummary = true
+                            val summary = runCatching {
+                                generateDailySummary(
+                                    dayKey = todayKey,
+                                    records = todayRecords,
+                                    templates = templates,
+                                    providers = providers,
+                                    agents = agents,
+                                    nickname = nickname
+                                )
+                            }.getOrElse {
+                                localDailySummary(todayKey, todayRecords, nickname)
+                            }
+                            onSaveSummary(summary)
+                            viewingSummary = summary
+                            generatingSummary = false
+                        }
+                    },
+                    onOpen = { todaySummary?.let { viewingSummary = it } }
+                )
+            }
             if (records.isEmpty()) {
                 item {
                     EmptyState("完成一轮专注后，记录会出现在这里。")
@@ -1439,8 +1611,7 @@ private fun RecordsScreen(
                     RecordCard(
                         record = record,
                         template = templates.firstOrNull { it.id == record.templateId },
-                        onEdit = { editingRecord = record },
-                        onChat = { chattingRecord = record }
+                        onEdit = { editingRecord = record }
                     )
                 }
             }
@@ -1461,27 +1632,93 @@ private fun RecordsScreen(
             )
         }
 
-        chattingRecord?.let { record ->
-            val template = templates.firstOrNull { it.id == record.templateId }
-                ?: RecordTemplate(record.templateId, record.templateName, emptyList())
-            RecordChatDialog(
-                record = record,
-                template = template,
-                providers = providers,
-                agents = agents,
-                nickname = nickname,
-                onDismiss = { chattingRecord = null }
-            )
+        viewingSummary?.let { summary ->
+            DailySummaryDialog(summary = summary, onDismiss = { viewingSummary = null })
         }
     }
+}
+
+@Composable
+private fun DailySummaryCard(
+    records: List<PomodoroRecord>,
+    summary: DailySummary?,
+    loading: Boolean,
+    onGenerate: () -> Unit,
+    onOpen: () -> Unit
+) {
+    val focusMinutes = records.sumOf { it.focusMinutes }
+    val focusedTodos = records.map { it.todoTitle }.distinct().size
+
+    ElevatedCard(
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("今日总结 Agent", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${records.size} 次专注 · $focusMinutes 分钟 · $focusedTodos 个对象",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                TextButton(
+                    enabled = summary != null,
+                    onClick = onOpen
+                ) {
+                    Text("查看")
+                }
+            }
+            OutlinedButton(
+                enabled = records.isNotEmpty() && !loading,
+                onClick = onGenerate,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    when {
+                        loading -> "生成中"
+                        summary == null -> "生成今日总结"
+                        else -> "重新生成"
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DailySummaryDialog(summary: DailySummary, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭")
+            }
+        },
+        title = { Text(summary.title) },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    "${summary.pomodoroCount} 个番茄 · ${summary.focusMinutes} 分钟 · ${formatTime(summary.generatedAt)}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(summary.content)
+            }
+        }
+    )
 }
 
 @Composable
 private fun RecordCard(
     record: PomodoroRecord,
     template: RecordTemplate?,
-    onEdit: () -> Unit,
-    onChat: () -> Unit
+    onEdit: () -> Unit
 ) {
     var expanded by rememberSaveable(record.id) { mutableStateOf(false) }
     val isBoundToTodo = record.todoId != null
@@ -1514,13 +1751,8 @@ private fun RecordCard(
                         style = MaterialTheme.typography.bodyMedium
                     )
                 }
-                Row {
-                    TextButton(onClick = onChat) {
-                        Text("Chat")
-                    }
-                    IconButton(onClick = onEdit) {
-                        Icon(Icons.Outlined.Edit, contentDescription = "编辑记录")
-                    }
+                IconButton(onClick = onEdit) {
+                    Icon(Icons.Outlined.Edit, contentDescription = "编辑记录")
                 }
             }
 
@@ -2443,6 +2675,61 @@ private fun ChatBubble(message: LlmChatMessage) {
 }
 
 @Composable
+private fun CelebrationCanvas() {
+    val transition = rememberInfiniteTransition(label = "celebration")
+    val phase by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1800),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "confetti"
+    )
+    val colors = listOf(
+        MaterialTheme.colorScheme.primary,
+        MaterialTheme.colorScheme.secondary,
+        MaterialTheme.colorScheme.tertiary,
+        Color(0xFFFFC857)
+    )
+
+    Canvas(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(96.dp)
+    ) {
+        val cupY = size.height * 0.58f
+        drawRect(
+            color = colors[0],
+            topLeft = Offset(size.width * 0.33f, cupY),
+            size = Size(size.width * 0.12f, size.height * 0.22f)
+        )
+        drawRect(
+            color = colors[2],
+            topLeft = Offset(size.width * 0.55f, cupY),
+            size = Size(size.width * 0.12f, size.height * 0.22f)
+        )
+        drawLine(
+            color = colors[1],
+            start = Offset(size.width * 0.45f, cupY + size.height * 0.05f),
+            end = Offset(size.width * 0.56f, cupY),
+            strokeWidth = 5.dp.toPx()
+        )
+        repeat(18) { index ->
+            val xSeed = ((index * 37) % 100) / 100f
+            val ySeed = ((index * 19) % 100) / 100f
+            val x = size.width * xSeed
+            val y = size.height * ((ySeed + phase) % 1f) * 0.72f
+            drawCircle(
+                color = colors[index % colors.size],
+                radius = (3 + index % 4).dp.toPx(),
+                center = Offset(x, y)
+            )
+        }
+    }
+}
+
+@Composable
 private fun RecordDialog(
     pendingRecord: PendingRecord,
     template: RecordTemplate,
@@ -2501,6 +2788,7 @@ private fun RecordDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
+                CelebrationCanvas()
                 Text(
                     "${pendingRecord.todoTitle} · ${pendingRecord.focusMinutes} 分钟",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2748,6 +3036,19 @@ private fun selectEncouragerAgent(agents: List<AgentSettings>): AgentSettings? {
     return enabledAgents.firstOrNull { it.name.contains("鼓励") } ?: enabledAgents.firstOrNull()
 }
 
+private fun selectDailySummaryAgent(agents: List<AgentSettings>): AgentSettings? {
+    val enabledAgents = agents.filter { it.enabled }
+    return enabledAgents.firstOrNull { it.name.contains("总结") && it.permissions.dailyRecords }
+        ?: enabledAgents.firstOrNull { it.permissions.dailyRecords }
+        ?: enabledAgents.firstOrNull()
+}
+
+private fun selectTodoAgent(agents: List<AgentSettings>): AgentSettings? {
+    val enabledAgents = agents.filter { it.enabled }
+    return enabledAgents.firstOrNull { it.permissions.todos }
+        ?: enabledAgents.firstOrNull()
+}
+
 private fun String.withNickname(nickname: String): String {
     return replace("{nickname}", nickname.ifBlank { DEFAULT_NICKNAME })
 }
@@ -2755,6 +3056,105 @@ private fun String.withNickname(nickname: String): String {
 private fun localEncouragement(record: PendingRecord, nickname: String): String {
     val name = nickname.ifBlank { DEFAULT_NICKNAME }
     return "$name，你刚刚把 ${record.focusMinutes} 分钟真正交给了「${record.todoTitle}」。这不是一句轻飘飘的“不错”，而是一次清清楚楚的推进：你坐下来、守住了这一轮、让事情往前走了一步。先把这份完成感收下，然后用复盘写下一个最小下一步。你已经启动了惯性，接下来只需要顺着它再走一点。"
+}
+
+private suspend fun generateDailySummary(
+    dayKey: String,
+    records: List<PomodoroRecord>,
+    templates: List<RecordTemplate>,
+    providers: List<LlmProviderSettings>,
+    agents: List<AgentSettings>,
+    nickname: String
+): DailySummary {
+    val fallback = localDailySummary(dayKey, records, nickname)
+    val agent = selectDailySummaryAgent(agents) ?: return fallback
+    val provider = agent.providerId.let { providerId ->
+        providers.firstOrNull { it.id == providerId }
+    } ?: providers.firstOrNull { it.isConfiguredForChat() } ?: return fallback
+    if (!provider.isConfiguredForChat()) return fallback
+    val systemPrompt = buildString {
+        append(agent.prompt.withNickname(nickname))
+        append("\n你是 Protato 的每日番茄总结 Agent。你要把当天番茄记录汇总成一篇自然、清晰、有洞察的中文总结文章。")
+        append(" 必须包含：番茄数量、总专注时长、专注对象/次数、今天状态评价、一个具体改进建议，以及最后真诚有力的鼓励。")
+        append(" 不要编造记录之外的事实。")
+    }
+    val userPrompt = buildString {
+        append("日期：$dayKey\n")
+        append("用户昵称：${nickname.ifBlank { DEFAULT_NICKNAME }}\n")
+        append(records.toDailySummaryContext(templates))
+        append("\n请写成 500 字以内的总结文章。")
+    }
+    val content = requestLlmChat(
+        provider = provider,
+        messages = listOf(
+            LlmChatMessage("system", systemPrompt),
+            LlmChatMessage("user", userPrompt)
+        )
+    )
+    return fallback.copy(
+        generatedAt = System.currentTimeMillis(),
+        content = content.ifBlank { fallback.content }
+    )
+}
+
+private fun localDailySummary(
+    dayKey: String,
+    records: List<PomodoroRecord>,
+    nickname: String
+): DailySummary {
+    val totalMinutes = records.sumOf { it.focusMinutes }
+    val focusTargets = records.groupingBy { it.todoTitle }.eachCount()
+    val topTargets = focusTargets.entries.sortedByDescending { it.value }.take(3)
+        .joinToString("、") { "${it.key} ${it.value} 次" }
+        .ifBlank { "暂无明确对象" }
+    val name = nickname.ifBlank { DEFAULT_NICKNAME }
+    val content = if (records.isEmpty()) {
+        "$name，今天还没有番茄记录。没关系，总结不是为了责备你，而是为了帮你重新看见下一步。先选一个足够小的任务，完成一轮就好。"
+    } else {
+        "$name，今天你完成了 ${records.size} 个番茄，总专注 $totalMinutes 分钟，主要投入在：$topTargets。\n\n从节奏看，你今天已经有了真实的推进，不只是“想做”，而是把时间放进了具体事情里。接下来可以复盘一下：哪一轮最顺，哪一轮最容易分心，然后把明天第一轮番茄安排给最重要但最容易拖延的那件事。\n\n请认真收下这份完成感。每一个番茄都不大，但它们合在一起，就是你把生活重新握回手里的证据。"
+    }
+    return DailySummary(
+        dayKey = dayKey,
+        generatedAt = System.currentTimeMillis(),
+        title = "$dayKey 今日番茄总结",
+        content = content,
+        pomodoroCount = records.size,
+        focusMinutes = totalMinutes
+    )
+}
+
+private suspend fun generateTodoSuggestions(
+    rawInput: String,
+    agent: AgentSettings,
+    provider: LlmProviderSettings,
+    nickname: String
+): List<String> {
+    val systemPrompt = buildString {
+        append(agent.prompt.withNickname(nickname))
+        append("\n你是 Protato 的待办整理助手。把用户随口说出的计划整理成短小、明确、可执行的 Todo。")
+        append(" 只输出待办列表，每行一个，不要编号以外的解释。每条控制在 24 个中文字符以内。")
+    }
+    val response = requestLlmChat(
+        provider = provider,
+        messages = listOf(
+            LlmChatMessage("system", systemPrompt),
+            LlmChatMessage("user", rawInput)
+        )
+    )
+    return parseTodoSuggestions(response).ifEmpty { parseTodoSuggestions(rawInput) }
+}
+
+private fun parseTodoSuggestions(text: String): List<String> {
+    return text
+        .split("\n", "；", ";", "。")
+        .map {
+            it.trim()
+                .replace(Regex("^[-*•\\d.、\\s]+"), "")
+                .trim()
+        }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .take(12)
 }
 
 private suspend fun generateAiEncouragement(
@@ -2823,6 +3223,26 @@ private fun PomodoroRecord.toPromptContext(template: RecordTemplate): String {
     }
 }
 
+private fun List<PomodoroRecord>.toDailySummaryContext(templates: List<RecordTemplate>): String {
+    val totalMinutes = sumOf { it.focusMinutes }
+    val focusTargets = groupingBy { it.todoTitle }.eachCount()
+        .entries
+        .sortedByDescending { it.value }
+        .joinToString("、") { "${it.key} ${it.value} 次" }
+    val details = joinToString("\n\n") { record ->
+        val template = templates.firstOrNull { it.id == record.templateId }
+            ?: RecordTemplate(record.templateId, record.templateName, emptyList())
+        record.toPromptContext(template)
+    }
+    return buildString {
+        append("番茄数量：${size}\n")
+        append("总专注时长：$totalMinutes 分钟\n")
+        append("专注对象统计：${focusTargets.ifBlank { "无" }}\n\n")
+        append("记录详情：\n")
+        append(details.ifBlank { "无记录" })
+    }
+}
+
 private fun hasMissingRequiredAnswers(
     template: RecordTemplate,
     answers: Map<String, String>
@@ -2840,6 +3260,10 @@ fun Int.asClock(): String {
 
 private fun formatTime(value: Long): String {
     return SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(value))
+}
+
+private fun dayKey(value: Long): String {
+    return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(value))
 }
 
 private fun emptyTemplate(): RecordTemplate {

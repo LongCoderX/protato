@@ -68,6 +68,15 @@ data class PomodoroRecord(
     val answers: List<FieldAnswer>
 )
 
+data class DailySummary(
+    val dayKey: String,
+    val generatedAt: Long,
+    val title: String,
+    val content: String,
+    val pomodoroCount: Int,
+    val focusMinutes: Int
+)
+
 data class LlmImportSettings(
     val provider: String = "",
     val modelName: String = "",
@@ -109,6 +118,7 @@ data class AppState(
     val todos: List<TodoItem> = emptyList(),
     val templates: List<RecordTemplate> = listOf(defaultTemplate()),
     val records: List<PomodoroRecord> = emptyList(),
+    val dailySummaries: List<DailySummary> = emptyList(),
     val focusMinutes: Int = 25,
     val restMinutes: Int = 5,
     val selectedTemplateId: String = defaultTemplate().id,
