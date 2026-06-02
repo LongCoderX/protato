@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -55,6 +56,9 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -87,6 +91,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -100,17 +105,26 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.startForegroundService
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -160,12 +174,12 @@ fun ProtatoApp() {
         ?: defaultTemplate()
     val durationMinutes = when (timerMode) {
         TimerMode.Focus -> appState.focusMinutes
-        TimerMode.ShortBreak -> appState.shortBreakMinutes
-        TimerMode.LongBreak -> appState.longBreakMinutes
+        TimerMode.Break -> appState.restMinutes
     }
-    val totalSeconds = durationMinutes * 60
     val activeSession = appState.activeSession
-    val isRunning = activeSession != null
+    val isRunning = activeSession != null && activeSession.pausedRemainingSeconds == null
+    val hasPausedSession = activeSession?.pausedRemainingSeconds != null
+    val totalSeconds = activeSession?.totalSeconds ?: durationMinutes * 60
     val remainingSeconds = activeSession?.remainingSeconds(nowMillis) ?: totalSeconds
     val pendingRecord = appState.pendingRecord?.toPendingRecordUi()
 
@@ -181,15 +195,15 @@ fun ProtatoApp() {
         activeSession?.let { timerMode = it.mode }
     }
 
-    LaunchedEffect(activeSession?.endsAt) {
-        if (activeSession != null) {
+    LaunchedEffect(activeSession?.endsAt, activeSession?.pausedRemainingSeconds) {
+        if (activeSession != null && isRunning) {
             context.startPomodoroService(ACTION_START_TIMER_SERVICE)
             PomodoroAlarmScheduler(context).schedule(activeSession)
         }
     }
 
-    LaunchedEffect(activeSession?.endsAt) {
-        while (activeSession != null) {
+    LaunchedEffect(activeSession?.endsAt, activeSession?.pausedRemainingSeconds) {
+        while (activeSession != null && isRunning) {
             nowMillis = System.currentTimeMillis()
             if (activeSession.remainingSeconds(nowMillis) <= 0) {
                 val nextState = completeSession(appState)
@@ -236,6 +250,7 @@ fun ProtatoApp() {
                         remainingSeconds = remainingSeconds,
                         totalSeconds = totalSeconds,
                         isRunning = isRunning,
+                        hasPausedSession = hasPausedSession,
                         pendingRecord = pendingRecord,
                         onStateChange = { setAppState(it) },
                         onSelectedTodo = { selectedTodoId = it },
@@ -247,12 +262,27 @@ fun ProtatoApp() {
                         },
                         onStartPause = {
                             if (isRunning) {
-                                setAppState(appState.copy(activeSession = null))
+                                activeSession?.let { session ->
+                                    setAppState(
+                                        appState.copy(
+                                            activeSession = session.copy(
+                                                pausedRemainingSeconds = session.remainingSeconds(nowMillis)
+                                            )
+                                        )
+                                    )
+                                }
                                 PomodoroAlarmScheduler(context).cancel()
-                                context.startPomodoroService(ACTION_STOP_TIMER_SERVICE)
+                                context.stopService(Intent(context, PomodoroTimerService::class.java))
                             } else {
                                 val startedAt = System.currentTimeMillis()
-                                val session = TimerSession(
+                                val session = activeSession?.let { pausedSession ->
+                                    pausedSession.pausedRemainingSeconds?.let { pausedSeconds ->
+                                        pausedSession.copy(
+                                            endsAt = startedAt + pausedSeconds * 1000L,
+                                            pausedRemainingSeconds = null
+                                        )
+                                    }
+                                } ?: TimerSession(
                                     mode = timerMode,
                                     todoId = selectedTodo?.id,
                                     todoTitle = selectedTodo?.title ?: "未绑定任务",
@@ -381,7 +411,6 @@ fun ProtatoApp() {
                     MainTab.Settings -> SettingsScreen(
                         appState = appState,
                         appVersionName = BuildConfig.VERSION_NAME,
-                        appVersionCode = BuildConfig.VERSION_CODE,
                         onStateChange = { setAppState(it) }
                     )
                 }
@@ -418,6 +447,7 @@ private fun FocusScreen(
     remainingSeconds: Int,
     totalSeconds: Int,
     isRunning: Boolean,
+    hasPausedSession: Boolean,
     pendingRecord: PendingRecord?,
     onStateChange: (AppState) -> Unit,
     onSelectedTodo: (String?) -> Unit,
@@ -445,6 +475,7 @@ private fun FocusScreen(
                 remainingSeconds = remainingSeconds,
                 totalSeconds = totalSeconds,
                 isRunning = isRunning,
+                hasPausedSession = hasPausedSession,
                 todos = appState.todos,
                 selectedTodoId = selectedTodoId,
                 selectedTodoTitle = selectedTodo?.title,
@@ -455,8 +486,7 @@ private fun FocusScreen(
                     onStateChange(
                         when (timerMode) {
                             TimerMode.Focus -> appState.copy(focusMinutes = minutes)
-                            TimerMode.ShortBreak -> appState.copy(shortBreakMinutes = minutes)
-                            TimerMode.LongBreak -> appState.copy(longBreakMinutes = minutes)
+                            TimerMode.Break -> appState.copy(restMinutes = minutes)
                         }
                     )
                 },
@@ -492,6 +522,7 @@ private fun TimerCard(
     remainingSeconds: Int,
     totalSeconds: Int,
     isRunning: Boolean,
+    hasPausedSession: Boolean,
     todos: List<TodoItem>,
     selectedTodoId: String?,
     selectedTodoTitle: String?,
@@ -519,15 +550,6 @@ private fun TimerCard(
                 .fillMaxSize()
                 .padding(20.dp)
         ) {
-            FilledIconButton(
-                onClick = { choosingTemplate = true },
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .size(42.dp)
-            ) {
-                Icon(Icons.AutoMirrored.Outlined.ViewList, contentDescription = "选择记录模板")
-            }
-
             Column(
                 modifier = Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -539,12 +561,13 @@ private fun TimerCard(
                         .padding(horizontal = 46.dp),
                     contentAlignment = Alignment.Center
                 ) {
+                    val timerModes = listOf(TimerMode.Focus, TimerMode.Break)
                     SingleChoiceSegmentedButtonRow {
-                        TimerMode.entries.forEachIndexed { index, item ->
+                        timerModes.forEachIndexed { index, item ->
                             SegmentedButton(
                                 selected = mode == item,
                                 onClick = { onModeChange(item) },
-                                shape = SegmentedButtonDefaults.itemShape(index, TimerMode.entries.size),
+                                shape = SegmentedButtonDefaults.itemShape(index, timerModes.size),
                                 label = { Text(item.label()) }
                             )
                         }
@@ -564,7 +587,27 @@ private fun TimerCard(
                         val ringSize = minOf(minOf(maxWidth, maxHeight), 380.dp)
                         Box(contentAlignment = Alignment.Center, modifier = Modifier.size(ringSize)) {
                             TimerRing(progress = remainingSeconds / totalSeconds.toFloat().coerceAtLeast(1f))
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Column(
+                                modifier = Modifier.padding(horizontal = 28.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                TextButton(
+                                    onClick = { choosingTemplate = true },
+                                    modifier = Modifier.widthIn(max = ringSize * 0.78f)
+                                ) {
+                                    Icon(
+                                        Icons.AutoMirrored.Outlined.ViewList,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = "模板：${selectedTemplate.name}",
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                                 Text(
                                     text = remainingSeconds.asClock(),
                                     style = MaterialTheme.typography.displayMedium,
@@ -579,7 +622,9 @@ private fun TimerCard(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.clickable(enabled = !isRunning) {
                                         choosingTodo = true
-                                    }
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -597,7 +642,13 @@ private fun TimerCard(
                             contentDescription = null
                         )
                         Spacer(Modifier.width(8.dp))
-                        Text(if (isRunning) "暂停" else "开始")
+                        Text(
+                            when {
+                                isRunning -> "暂停"
+                                hasPausedSession -> "继续"
+                                else -> "开始"
+                            }
+                        )
                     }
                     Spacer(Modifier.width(12.dp))
                     OutlinedButton(onClick = onReset) {
@@ -731,7 +782,14 @@ private fun TodoSelectDialog(
                         FilterChip(
                             selected = selectedTodoId == todo.id,
                             onClick = { onSelected(todo.id) },
-                            label = { Text(todo.title) }
+                            label = {
+                                Text(
+                                    todo.title,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
                 }
@@ -764,7 +822,14 @@ private fun TemplateSelectDialog(
                     FilterChip(
                         selected = selectedTemplateId == template.id,
                         onClick = { onSelected(template.id) },
-                        label = { Text("${template.name} · ${template.fields.size} 个字段") }
+                        label = {
+                            Text(
+                                "${template.name} · ${template.fields.size} 个字段",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        },
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
@@ -1483,7 +1548,6 @@ private fun RecordTodoChip(title: String, bound: Boolean) {
 private fun SettingsScreen(
     appState: AppState,
     appVersionName: String,
-    appVersionCode: Int,
     onStateChange: (AppState) -> Unit
 ) {
     LazyColumn(
@@ -1492,21 +1556,19 @@ private fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Header(title = "设置", subtitle = "本地身份、模型导入和自动项目版本号")
+            Header(title = "设置", subtitle = "本地身份、模型导入和版本")
         }
         item {
             ProjectVersionCard(
                 projectRevision = appState.projectRevision,
-                appVersionName = appVersionName,
-                appVersionCode = appVersionCode,
-                nickname = appState.nickname
+                appVersionName = appVersionName
             )
         }
         item {
             NicknameSettingsCard(
                 nickname = appState.nickname,
                 onNicknameChange = { nickname ->
-                    onStateChange(appState.copy(nickname = nickname))
+                    onStateChange(appState.copy(nickname = nickname.ifBlank { DEFAULT_NICKNAME }))
                 }
             )
         }
@@ -1524,6 +1586,7 @@ private fun SettingsScreen(
         item {
             EncouragerAgentSettingsCard(
                 settings = appState.encouragerAgent,
+                nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
                 onChange = { encouragerAgent ->
                     onStateChange(appState.copy(encouragerAgent = encouragerAgent))
                 }
@@ -1535,9 +1598,7 @@ private fun SettingsScreen(
 @Composable
 private fun ProjectVersionCard(
     projectRevision: Int,
-    appVersionName: String,
-    appVersionCode: Int,
-    nickname: String
+    appVersionName: String
 ) {
     ElevatedCard(
         shape = RoundedCornerShape(8.dp),
@@ -1547,9 +1608,9 @@ private fun ProjectVersionCard(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("当前项目版本", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("版本", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Text(
-                        text = "每次项目数据修改后自动递增",
+                        text = "项目 v$projectRevision · 应用 $appVersionName",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -1565,9 +1626,6 @@ private fun ProjectVersionCard(
                     )
                 }
             }
-            HorizontalDivider()
-            SettingLine(label = "应用版本", value = "$appVersionName ($appVersionCode)")
-            SettingLine(label = "本地昵称", value = nickname.ifBlank { "未设置" })
         }
     }
 }
@@ -1601,6 +1659,14 @@ private fun LlmImportSettingsCard(
     onChange: (LlmImportSettings) -> Unit,
     onClear: () -> Unit
 ) {
+    val scope = rememberCoroutineScope()
+    var fetchedModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var modelMenuExpanded by remember { mutableStateOf(false) }
+    var loadingModels by remember { mutableStateOf(false) }
+    var modelFetchError by remember { mutableStateOf<String?>(null) }
+    val apiKeyMask = "***"
+    val apiKeyDisplay = if (settings.apiKey.isBlank()) "" else apiKeyMask
+
     ElevatedCard(
         shape = RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth(),
@@ -1628,26 +1694,112 @@ private fun LlmImportSettingsCard(
                 singleLine = true
             )
             OutlinedTextField(
-                value = settings.modelName,
-                onValueChange = { onChange(settings.copy(modelName = it.take(80))) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("模型名称") },
-                singleLine = true
-            )
-            OutlinedTextField(
                 value = settings.endpoint,
-                onValueChange = { onChange(settings.copy(endpoint = it.take(240))) },
+                onValueChange = {
+                    fetchedModels = emptyList()
+                    modelFetchError = null
+                    onChange(settings.copy(endpoint = it.take(240)))
+                },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("接口地址") },
                 singleLine = true
             )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    enabled = settings.endpoint.isNotBlank() && !loadingModels,
+                    onClick = {
+                        scope.launch {
+                            loadingModels = true
+                            modelFetchError = null
+                            fetchedModels = runCatching {
+                                fetchLlmModels(settings.endpoint, settings.apiKey)
+                            }.getOrElse { error ->
+                                modelFetchError = error.message ?: "获取模型失败"
+                                emptyList()
+                            }
+                            loadingModels = false
+                        }
+                    }
+                ) {
+                    if (loadingModels) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Text("获取模型")
+                }
+                Box(Modifier.weight(1f)) {
+                    OutlinedButton(
+                        enabled = fetchedModels.isNotEmpty(),
+                        onClick = { modelMenuExpanded = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            settings.modelName.ifBlank { "选择模型" },
+                            modifier = Modifier.weight(1f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Start
+                        )
+                        Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                    }
+                    DropdownMenu(
+                        expanded = modelMenuExpanded,
+                        onDismissRequest = { modelMenuExpanded = false }
+                    ) {
+                        fetchedModels.forEach { model ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        model,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                },
+                                onClick = {
+                                    onChange(settings.copy(modelName = model))
+                                    modelMenuExpanded = false
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+            if (fetchedModels.isEmpty()) {
+                OutlinedTextField(
+                    value = settings.modelName,
+                    onValueChange = { onChange(settings.copy(modelName = it.take(80))) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("模型名称") },
+                    singleLine = true
+                )
+            }
+            modelFetchError?.let { error ->
+                Text(error, color = MaterialTheme.colorScheme.error)
+            }
             OutlinedTextField(
-                value = settings.apiKey,
-                onValueChange = { onChange(settings.copy(apiKey = it.take(240))) },
+                value = apiKeyDisplay,
+                onValueChange = { value ->
+                    when {
+                        value.isBlank() -> onChange(settings.copy(apiKey = ""))
+                        value == apiKeyMask -> Unit
+                        value.startsWith(apiKeyMask) -> {
+                            onChange(settings.copy(apiKey = value.removePrefix(apiKeyMask).take(240)))
+                        }
+                        value != apiKeyMask -> onChange(settings.copy(apiKey = value.take(240)))
+                    }
+                },
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("API Key") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation()
+                singleLine = true
             )
         }
     }
@@ -1656,6 +1808,7 @@ private fun LlmImportSettingsCard(
 @Composable
 private fun EncouragerAgentSettingsCard(
     settings: EncouragerAgentSettings,
+    nickname: String,
     onChange: (EncouragerAgentSettings) -> Unit
 ) {
     ElevatedCard(
@@ -1684,6 +1837,21 @@ private fun EncouragerAgentSettingsCard(
                 label = { Text("Agent 名称") },
                 singleLine = true
             )
+            TextButton(
+                onClick = {
+                    val prompt = settings.prompt
+                    val nextPrompt = if ("{nickname}" in prompt || nickname in prompt) {
+                        prompt
+                    } else {
+                        "请称呼我为「$nickname」。$prompt"
+                    }
+                    onChange(settings.copy(prompt = nextPrompt.take(500)))
+                }
+            ) {
+                Icon(Icons.Outlined.Add, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("插入昵称")
+            }
             OutlinedTextField(
                 value = settings.prompt,
                 onValueChange = { onChange(settings.copy(prompt = it.take(500))) },
@@ -1947,14 +2115,12 @@ private fun AppState.withNextRevisionFrom(previous: AppState): AppState {
 
 private fun TimerMode.label(): String = when (this) {
     TimerMode.Focus -> "专注"
-    TimerMode.ShortBreak -> "短休"
-    TimerMode.LongBreak -> "长休"
+    TimerMode.Break -> "休息"
 }
 
 private fun TimerMode.durationRange(): IntRange = when (this) {
     TimerMode.Focus -> 5..90
-    TimerMode.ShortBreak -> 1..30
-    TimerMode.LongBreak -> 5..60
+    TimerMode.Break -> 1..60
 }
 
 private fun FieldType.label(): String = when (this) {
@@ -2024,6 +2190,62 @@ private fun Context.startPomodoroService(action: String) {
     } else {
         startService(intent)
     }
+}
+
+private suspend fun fetchLlmModels(endpoint: String, apiKey: String): List<String> {
+    return withContext(Dispatchers.IO) {
+        val connection = (URL(normalizeModelsEndpoint(endpoint)).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 10_000
+            readTimeout = 10_000
+            if (apiKey.isNotBlank()) {
+                setRequestProperty("Authorization", "Bearer $apiKey")
+            }
+        }
+        try {
+            val responseCode = connection.responseCode
+            val stream = if (responseCode in 200..299) {
+                connection.inputStream
+            } else {
+                connection.errorStream ?: connection.inputStream
+            }
+            val body = BufferedReader(InputStreamReader(stream)).use { it.readText() }
+            if (responseCode !in 200..299) {
+                throw IllegalStateException("获取模型失败：HTTP $responseCode")
+            }
+            parseModelNames(body).ifEmpty {
+                throw IllegalStateException("接口未返回可选择模型")
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+}
+
+private fun normalizeModelsEndpoint(endpoint: String): String {
+    val trimmed = endpoint.trim().trimEnd('/')
+    return when {
+        trimmed.endsWith("/models") -> trimmed
+        trimmed.endsWith("/v1") -> "$trimmed/models"
+        else -> "$trimmed/v1/models"
+    }
+}
+
+private fun parseModelNames(body: String): List<String> {
+    val root = body.trim()
+    val models = if (root.startsWith("[")) {
+        JSONArray(root)
+    } else {
+        JSONObject(root).optJSONArray("data") ?: JSONArray()
+    }
+    return List(models.length()) { index ->
+        val item = models.opt(index)
+        when (item) {
+            is JSONObject -> item.optString("id").ifBlank { item.optString("name") }
+            is String -> item
+            else -> ""
+        }
+    }.filter { it.isNotBlank() }.distinct()
 }
 
 private fun newId(): String = UUID.randomUUID().toString()

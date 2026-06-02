@@ -2,8 +2,7 @@ package com.protato.app
 
 enum class TimerMode {
     Focus,
-    ShortBreak,
-    LongBreak
+    Break
 }
 
 enum class FieldType {
@@ -44,7 +43,8 @@ data class TimerSession(
     val startedAt: Long,
     val endsAt: Long,
     val totalSeconds: Int,
-    val templateId: String
+    val templateId: String,
+    val pausedRemainingSeconds: Int? = null
 )
 
 data class PendingPomodoroRecord(
@@ -78,7 +78,7 @@ data class LlmImportSettings(
 data class EncouragerAgentSettings(
     val enabled: Boolean = false,
     val name: String = "鼓励师",
-    val prompt: String = "用温和、具体、不油腻的方式鼓励我继续完成下一轮番茄。"
+    val prompt: String = DEFAULT_ENCOURAGER_PROMPT
 )
 
 data class AppState(
@@ -86,16 +86,18 @@ data class AppState(
     val templates: List<RecordTemplate> = listOf(defaultTemplate()),
     val records: List<PomodoroRecord> = emptyList(),
     val focusMinutes: Int = 25,
-    val shortBreakMinutes: Int = 5,
-    val longBreakMinutes: Int = 15,
+    val restMinutes: Int = 5,
     val selectedTemplateId: String = defaultTemplate().id,
     val activeSession: TimerSession? = null,
     val pendingRecord: PendingPomodoroRecord? = null,
     val projectRevision: Int = 1,
-    val nickname: String = "",
+    val nickname: String = DEFAULT_NICKNAME,
     val llmImport: LlmImportSettings = LlmImportSettings(),
     val encouragerAgent: EncouragerAgentSettings = EncouragerAgentSettings()
 )
+
+const val DEFAULT_NICKNAME = "专注者"
+const val DEFAULT_ENCOURAGER_PROMPT = "请称呼我为「{nickname}」，用温和、具体、不油腻的方式鼓励我继续完成下一轮番茄。"
 
 fun defaultTemplate(): RecordTemplate {
     return RecordTemplate(

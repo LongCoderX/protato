@@ -127,13 +127,13 @@ class PomodoroNotifications(private val context: Context) {
 }
 
 fun TimerSession.remainingSeconds(now: Long = System.currentTimeMillis()): Int {
+    pausedRemainingSeconds?.let { return it.coerceAtLeast(0) }
     return (((endsAt - now).coerceAtLeast(0L) + 999L) / 1000L).toInt()
 }
 
 fun TimerMode.notificationTitle(): String = when (this) {
     TimerMode.Focus -> "正在专注"
-    TimerMode.ShortBreak -> "短休息中"
-    TimerMode.LongBreak -> "长休息中"
+    TimerMode.Break -> "休息中"
 }
 
 fun pendingIntentFlags(): Int {

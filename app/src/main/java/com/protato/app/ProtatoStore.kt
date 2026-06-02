@@ -22,13 +22,15 @@ class ProtatoStore(context: Context) {
                 templates = templates.ifEmpty { listOf(defaultTemplate()) },
                 records = root.optJSONArray("records")?.toRecords().orEmpty(),
                 focusMinutes = root.optInt("focusMinutes", 25).coerceIn(1, 180),
-                shortBreakMinutes = root.optInt("shortBreakMinutes", 5).coerceIn(1, 60),
-                longBreakMinutes = root.optInt("longBreakMinutes", 15).coerceIn(1, 120),
+                restMinutes = root.optInt(
+                    "restMinutes",
+                    root.optInt("shortBreakMinutes", 5)
+                ).coerceIn(1, 60),
                 selectedTemplateId = selectedTemplateId,
                 activeSession = root.optJSONObject("activeSession")?.toTimerSession(),
                 pendingRecord = root.optJSONObject("pendingRecord")?.toPendingRecord(),
                 projectRevision = root.optInt("projectRevision", 1).coerceAtLeast(1),
-                nickname = root.optString("nickname"),
+                nickname = root.optString("nickname", DEFAULT_NICKNAME).ifBlank { DEFAULT_NICKNAME },
                 llmImport = root.optJSONObject("llmImport")?.toLlmImportSettings() ?: LlmImportSettings(),
                 encouragerAgent = root.optJSONObject("encouragerAgent")?.toEncouragerAgentSettings()
                     ?: EncouragerAgentSettings()
@@ -42,8 +44,7 @@ class ProtatoStore(context: Context) {
             .put("templates", state.templates.toJsonArray { it.toJson() })
             .put("records", state.records.toJsonArray { it.toJson() })
             .put("focusMinutes", state.focusMinutes)
-            .put("shortBreakMinutes", state.shortBreakMinutes)
-            .put("longBreakMinutes", state.longBreakMinutes)
+            .put("restMinutes", state.restMinutes)
             .put("selectedTemplateId", state.selectedTemplateId)
             .put("activeSession", state.activeSession?.toJson() ?: JSONObject.NULL)
             .put("pendingRecord", state.pendingRecord?.toJson() ?: JSONObject.NULL)
@@ -106,7 +107,11 @@ private fun JSONArray.toAnswers(): List<FieldAnswer> = mapObjects { item ->
 }.filter { it.fieldId.isNotBlank() }
 
 private fun JSONObject.toTimerSession(): TimerSession? {
-    val mode = runCatching { TimerMode.valueOf(optString("mode")) }.getOrNull() ?: return null
+    val mode = when (optString("mode")) {
+        "Focus" -> TimerMode.Focus
+        "Break", "ShortBreak", "LongBreak" -> TimerMode.Break
+        else -> return null
+    }
     return TimerSession(
         mode = mode,
         todoId = optString("todoId").takeIf { it.isNotBlank() },
@@ -114,7 +119,9 @@ private fun JSONObject.toTimerSession(): TimerSession? {
         startedAt = optLong("startedAt"),
         endsAt = optLong("endsAt"),
         totalSeconds = optInt("totalSeconds"),
-        templateId = optString("templateId")
+        templateId = optString("templateId"),
+        pausedRemainingSeconds = optInt("pausedRemainingSeconds")
+            .takeIf { opt("pausedRemainingSeconds") != null && it > 0 }
     ).takeIf { it.startedAt > 0L && it.endsAt > 0L && it.totalSeconds > 0 }
 }
 
@@ -144,9 +151,9 @@ private fun JSONObject.toEncouragerAgentSettings(): EncouragerAgentSettings {
         name = optString("name", "鼓励师").ifBlank { "鼓励师" },
         prompt = optString(
             "prompt",
-            "用温和、具体、不油腻的方式鼓励我继续完成下一轮番茄。"
+            DEFAULT_ENCOURAGER_PROMPT
         ).ifBlank {
-            "用温和、具体、不油腻的方式鼓励我继续完成下一轮番茄。"
+            DEFAULT_ENCOURAGER_PROMPT
         }
     )
 }
@@ -192,6 +199,7 @@ private fun TimerSession.toJson(): JSONObject = JSONObject()
     .put("endsAt", endsAt)
     .put("totalSeconds", totalSeconds)
     .put("templateId", templateId)
+    .put("pausedRemainingSeconds", pausedRemainingSeconds ?: JSONObject.NULL)
 
 private fun PendingPomodoroRecord.toJson(): JSONObject = JSONObject()
     .put("todoId", todoId ?: "")

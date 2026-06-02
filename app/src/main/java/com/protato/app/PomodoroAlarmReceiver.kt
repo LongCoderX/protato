@@ -11,6 +11,7 @@ class PomodoroAlarmReceiver : BroadcastReceiver() {
         val store = ProtatoStore(context)
         val state = store.load()
         val session = state.activeSession ?: return
+        if (session.pausedRemainingSeconds != null) return
         val pendingRecord = PendingPomodoroRecord(
             todoId = session.todoId,
             todoTitle = session.todoTitle,
