@@ -30,14 +30,32 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
+      - name: Check release signing secrets
+        id: signing
+        env:
+          PROTATO_KEYSTORE_BASE64: ${{ secrets.PROTATO_KEYSTORE_BASE64 }}
+          PROTATO_KEYSTORE_PASSWORD: ${{ secrets.PROTATO_KEYSTORE_PASSWORD }}
+          PROTATO_KEY_ALIAS: ${{ secrets.PROTATO_KEY_ALIAS }}
+          PROTATO_KEY_PASSWORD: ${{ secrets.PROTATO_KEY_PASSWORD }}
+        run: |
+          if [ -n "$PROTATO_KEYSTORE_BASE64" ] && \
+             [ -n "$PROTATO_KEYSTORE_PASSWORD" ] && \
+             [ -n "$PROTATO_KEY_ALIAS" ] && \
+             [ -n "$PROTATO_KEY_PASSWORD" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Decode release keystore
+        if: steps.signing.outputs.available == 'true'
         env:
           PROTATO_KEYSTORE_BASE64: ${{ secrets.PROTATO_KEYSTORE_BASE64 }}
         run: |
-          test -n "$PROTATO_KEYSTORE_BASE64"
           echo "$PROTATO_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/protato-release.jks"
 
-      - name: Build release APK
+      - name: Build signed release APK
+        if: steps.signing.outputs.available == 'true'
         env:
           PROTATO_KEYSTORE_PATH: ${{ runner.temp }}/protato-release.jks
           PROTATO_KEYSTORE_PASSWORD: ${{ secrets.PROTATO_KEYSTORE_PASSWORD }}
@@ -45,11 +63,20 @@ jobs:
           PROTATO_KEY_PASSWORD: ${{ secrets.PROTATO_KEY_PASSWORD }}
         run: ./gradlew --no-daemon :app:assembleRelease
 
+      - name: Build debug APK fallback
+        if: steps.signing.outputs.available != 'true'
+        run: ./gradlew --no-daemon :app:assembleDebug
+
       - name: Prepare release asset
-        run: cp app/build/outputs/apk/release/app-release.apk "protato-${GITHUB_REF_NAME}-release.apk"
+        run: |
+          if [ "${{ steps.signing.outputs.available }}" = "true" ]; then
+            cp app/build/outputs/apk/release/app-release.apk "protato-${GITHUB_REF_NAME}-release.apk"
+          else
+            cp app/build/outputs/apk/debug/app-debug.apk "protato-${GITHUB_REF_NAME}-debug.apk"
+          fi
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: protato-${{ github.ref_name }}-release.apk
+          files: protato-${{ github.ref_name }}-*.apk
           generate_release_notes: true
