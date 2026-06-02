@@ -26,7 +26,12 @@ class ProtatoStore(context: Context) {
                 longBreakMinutes = root.optInt("longBreakMinutes", 15).coerceIn(1, 120),
                 selectedTemplateId = selectedTemplateId,
                 activeSession = root.optJSONObject("activeSession")?.toTimerSession(),
-                pendingRecord = root.optJSONObject("pendingRecord")?.toPendingRecord()
+                pendingRecord = root.optJSONObject("pendingRecord")?.toPendingRecord(),
+                projectRevision = root.optInt("projectRevision", 1).coerceAtLeast(1),
+                nickname = root.optString("nickname"),
+                llmImport = root.optJSONObject("llmImport")?.toLlmImportSettings() ?: LlmImportSettings(),
+                encouragerAgent = root.optJSONObject("encouragerAgent")?.toEncouragerAgentSettings()
+                    ?: EncouragerAgentSettings()
             )
         }.getOrElse { AppState() }
     }
@@ -42,6 +47,10 @@ class ProtatoStore(context: Context) {
             .put("selectedTemplateId", state.selectedTemplateId)
             .put("activeSession", state.activeSession?.toJson() ?: JSONObject.NULL)
             .put("pendingRecord", state.pendingRecord?.toJson() ?: JSONObject.NULL)
+            .put("projectRevision", state.projectRevision)
+            .put("nickname", state.nickname)
+            .put("llmImport", state.llmImport.toJson())
+            .put("encouragerAgent", state.encouragerAgent.toJson())
         file.writeText(root.toString(2))
     }
 }
@@ -120,6 +129,28 @@ private fun JSONObject.toPendingRecord(): PendingPomodoroRecord? {
     ).takeIf { it.startedAt > 0L && it.endedAt > 0L && it.focusMinutes > 0 }
 }
 
+private fun JSONObject.toLlmImportSettings(): LlmImportSettings {
+    return LlmImportSettings(
+        provider = optString("provider"),
+        modelName = optString("modelName"),
+        endpoint = optString("endpoint"),
+        apiKey = optString("apiKey")
+    )
+}
+
+private fun JSONObject.toEncouragerAgentSettings(): EncouragerAgentSettings {
+    return EncouragerAgentSettings(
+        enabled = optBoolean("enabled"),
+        name = optString("name", "鼓励师").ifBlank { "鼓励师" },
+        prompt = optString(
+            "prompt",
+            "用温和、具体、不油腻的方式鼓励我继续完成下一轮番茄。"
+        ).ifBlank {
+            "用温和、具体、不油腻的方式鼓励我继续完成下一轮番茄。"
+        }
+    )
+}
+
 private fun TodoItem.toJson(): JSONObject = JSONObject()
     .put("id", id)
     .put("title", title)
@@ -169,6 +200,17 @@ private fun PendingPomodoroRecord.toJson(): JSONObject = JSONObject()
     .put("endedAt", endedAt)
     .put("focusMinutes", focusMinutes)
     .put("templateId", templateId)
+
+private fun LlmImportSettings.toJson(): JSONObject = JSONObject()
+    .put("provider", provider)
+    .put("modelName", modelName)
+    .put("endpoint", endpoint)
+    .put("apiKey", apiKey)
+
+private fun EncouragerAgentSettings.toJson(): JSONObject = JSONObject()
+    .put("enabled", enabled)
+    .put("name", name)
+    .put("prompt", prompt)
 
 private fun JSONArray.toStringList(): List<String> {
     return List(length()) { index -> optString(index) }.filter { it.isNotBlank() }

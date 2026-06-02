@@ -46,6 +46,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.WorkHistory
@@ -72,6 +73,7 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -98,6 +100,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -137,7 +141,8 @@ private enum class MainTab(val label: String, val icon: ImageVector) {
     Focus("专注", Icons.Outlined.Timer),
     Todo("待办", Icons.AutoMirrored.Outlined.List),
     Templates("模板", Icons.AutoMirrored.Outlined.ViewList),
-    Records("记录", Icons.Outlined.WorkHistory)
+    Records("记录", Icons.Outlined.WorkHistory),
+    Settings("设置", Icons.Outlined.Settings)
 }
 
 @Composable
@@ -164,6 +169,10 @@ fun ProtatoApp() {
     val remainingSeconds = activeSession?.remainingSeconds(nowMillis) ?: totalSeconds
     val pendingRecord = appState.pendingRecord?.toPendingRecordUi()
 
+    fun setAppState(nextState: AppState) {
+        appState = nextState.withNextRevisionFrom(appState)
+    }
+
     LaunchedEffect(appState) {
         store.save(appState)
     }
@@ -184,8 +193,9 @@ fun ProtatoApp() {
             nowMillis = System.currentTimeMillis()
             if (activeSession.remainingSeconds(nowMillis) <= 0) {
                 val nextState = completeSession(appState)
-                appState = nextState
-                store.save(nextState)
+                val revisedState = nextState.withNextRevisionFrom(appState)
+                appState = revisedState
+                store.save(revisedState)
                 PomodoroNotifications(context).cancelTimer()
                 PomodoroAlarmScheduler(context).cancel()
                 context.stopService(Intent(context, PomodoroTimerService::class.java))
@@ -227,17 +237,17 @@ fun ProtatoApp() {
                         totalSeconds = totalSeconds,
                         isRunning = isRunning,
                         pendingRecord = pendingRecord,
-                        onStateChange = { appState = it },
+                        onStateChange = { setAppState(it) },
                         onSelectedTodo = { selectedTodoId = it },
                         onModeChange = { mode ->
                             timerMode = mode
-                            appState = appState.copy(activeSession = null)
+                            setAppState(appState.copy(activeSession = null))
                             PomodoroAlarmScheduler(context).cancel()
                             context.startPomodoroService(ACTION_STOP_TIMER_SERVICE)
                         },
                         onStartPause = {
                             if (isRunning) {
-                                appState = appState.copy(activeSession = null)
+                                setAppState(appState.copy(activeSession = null))
                                 PomodoroAlarmScheduler(context).cancel()
                                 context.startPomodoroService(ACTION_STOP_TIMER_SERVICE)
                             } else {
@@ -252,20 +262,21 @@ fun ProtatoApp() {
                                     templateId = selectedTemplate.id
                                 )
                                 val nextState = appState.copy(activeSession = session)
-                                appState = nextState
-                                store.save(nextState)
+                                val revisedState = nextState.withNextRevisionFrom(appState)
+                                appState = revisedState
+                                store.save(revisedState)
                                 nowMillis = startedAt
                                 PomodoroAlarmScheduler(context).schedule(session)
                                 context.startPomodoroService(ACTION_START_TIMER_SERVICE)
                             }
                         },
                         onReset = {
-                            appState = appState.copy(activeSession = null)
+                            setAppState(appState.copy(activeSession = null))
                             PomodoroAlarmScheduler(context).cancel()
                             context.startPomodoroService(ACTION_STOP_TIMER_SERVICE)
                         },
                         onDismissRecord = {
-                            appState = appState.copy(pendingRecord = null)
+                            setAppState(appState.copy(pendingRecord = null))
                             PomodoroNotifications(context).cancelCompleted()
                         },
                         onSaveRecord = { record, answers ->
@@ -282,10 +293,10 @@ fun ProtatoApp() {
                                 focusMinutes = record.focusMinutes,
                                 answers = answers
                             )
-                            appState = appState.copy(
+                            setAppState(appState.copy(
                                 records = listOf(newRecord) + appState.records,
                                 pendingRecord = null
-                            )
+                            ))
                             PomodoroNotifications(context).cancelCompleted()
                         }
                     )
@@ -293,34 +304,34 @@ fun ProtatoApp() {
                     MainTab.Todo -> TodoScreen(
                         todos = appState.todos,
                         onAdd = { title ->
-                            appState = appState.copy(
+                            setAppState(appState.copy(
                                 todos = listOf(
                                     TodoItem(id = newId(), title = title.trim())
                                 ) + appState.todos
-                            )
+                            ))
                         },
                         onToggle = { item ->
-                            appState = appState.copy(
+                            setAppState(appState.copy(
                                 todos = appState.todos.map {
                                     if (it.id == item.id) it.copy(completed = !it.completed) else it
                                 }
-                            )
+                            ))
                         },
                         onDelete = { item ->
-                            appState = appState.copy(todos = appState.todos.filterNot { it.id == item.id })
+                            setAppState(appState.copy(todos = appState.todos.filterNot { it.id == item.id }))
                             if (selectedTodoId == item.id) selectedTodoId = null
                         },
                         onUpdate = { updatedItem ->
-                            appState = appState.copy(
+                            setAppState(appState.copy(
                                 todos = appState.todos.map { item ->
                                     if (item.id == updatedItem.id) updatedItem else item
                                 }
-                            )
+                            ))
                         },
                         onDeleteMany = { itemIds ->
-                            appState = appState.copy(
+                            setAppState(appState.copy(
                                 todos = appState.todos.filterNot { it.id in itemIds }
-                            )
+                            ))
                             if (selectedTodoId in itemIds) selectedTodoId = null
                         }
                     )
@@ -329,7 +340,7 @@ fun ProtatoApp() {
                         templates = appState.templates,
                         selectedTemplateId = appState.selectedTemplateId,
                         onSelectedTemplate = { templateId ->
-                            appState = appState.copy(selectedTemplateId = templateId)
+                            setAppState(appState.copy(selectedTemplateId = templateId))
                         },
                         onUpsert = { template ->
                             val exists = appState.templates.any { it.id == template.id }
@@ -338,19 +349,19 @@ fun ProtatoApp() {
                             } else {
                                 listOf(template) + appState.templates
                             }
-                            appState = appState.copy(
+                            setAppState(appState.copy(
                                 templates = templates,
                                 selectedTemplateId = template.id
-                            )
+                            ))
                         },
                         onDelete = { template ->
                             val nextTemplates = appState.templates.filterNot { it.id == template.id }.ifEmpty {
                                 listOf(defaultTemplate())
                             }
-                            appState = appState.copy(
+                            setAppState(appState.copy(
                                 templates = nextTemplates,
                                 selectedTemplateId = nextTemplates.first().id
-                            )
+                            ))
                         }
                     )
 
@@ -359,12 +370,19 @@ fun ProtatoApp() {
                         templates = appState.templates,
                         todos = appState.todos,
                         onUpdateRecord = { updatedRecord ->
-                            appState = appState.copy(
+                            setAppState(appState.copy(
                                 records = appState.records.map { record ->
                                     if (record.id == updatedRecord.id) updatedRecord else record
                                 }
-                            )
+                            ))
                         }
+                    )
+
+                    MainTab.Settings -> SettingsScreen(
+                        appState = appState,
+                        appVersionName = BuildConfig.VERSION_NAME,
+                        appVersionCode = BuildConfig.VERSION_CODE,
+                        onStateChange = { setAppState(it) }
                     )
                 }
             }
@@ -1462,6 +1480,239 @@ private fun RecordTodoChip(title: String, bound: Boolean) {
 }
 
 @Composable
+private fun SettingsScreen(
+    appState: AppState,
+    appVersionName: String,
+    appVersionCode: Int,
+    onStateChange: (AppState) -> Unit
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Header(title = "设置", subtitle = "本地身份、模型导入和自动项目版本号")
+        }
+        item {
+            ProjectVersionCard(
+                projectRevision = appState.projectRevision,
+                appVersionName = appVersionName,
+                appVersionCode = appVersionCode,
+                nickname = appState.nickname
+            )
+        }
+        item {
+            NicknameSettingsCard(
+                nickname = appState.nickname,
+                onNicknameChange = { nickname ->
+                    onStateChange(appState.copy(nickname = nickname))
+                }
+            )
+        }
+        item {
+            LlmImportSettingsCard(
+                settings = appState.llmImport,
+                onChange = { llmImport ->
+                    onStateChange(appState.copy(llmImport = llmImport))
+                },
+                onClear = {
+                    onStateChange(appState.copy(llmImport = LlmImportSettings()))
+                }
+            )
+        }
+        item {
+            EncouragerAgentSettingsCard(
+                settings = appState.encouragerAgent,
+                onChange = { encouragerAgent ->
+                    onStateChange(appState.copy(encouragerAgent = encouragerAgent))
+                }
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProjectVersionCard(
+    projectRevision: Int,
+    appVersionName: String,
+    appVersionCode: Int,
+    nickname: String
+) {
+    ElevatedCard(
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("当前项目版本", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = "每次项目数据修改后自动递增",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text(
+                        text = "v$projectRevision",
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            HorizontalDivider()
+            SettingLine(label = "应用版本", value = "$appVersionName ($appVersionCode)")
+            SettingLine(label = "本地昵称", value = nickname.ifBlank { "未设置" })
+        }
+    }
+}
+
+@Composable
+private fun NicknameSettingsCard(
+    nickname: String,
+    onNicknameChange: (String) -> Unit
+) {
+    ElevatedCard(
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("个人昵称", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            OutlinedTextField(
+                value = nickname,
+                onValueChange = { onNicknameChange(it.take(24)) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("本地昵称") },
+                singleLine = true
+            )
+        }
+    }
+}
+
+@Composable
+private fun LlmImportSettingsCard(
+    settings: LlmImportSettings,
+    onChange: (LlmImportSettings) -> Unit,
+    onClear: () -> Unit
+) {
+    ElevatedCard(
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "大模型 LLM 导入",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                TextButton(onClick = onClear) {
+                    Icon(Icons.Outlined.Close, contentDescription = null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("清空")
+                }
+            }
+            OutlinedTextField(
+                value = settings.provider,
+                onValueChange = { onChange(settings.copy(provider = it.take(40))) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("供应商") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = settings.modelName,
+                onValueChange = { onChange(settings.copy(modelName = it.take(80))) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("模型名称") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = settings.endpoint,
+                onValueChange = { onChange(settings.copy(endpoint = it.take(240))) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("接口地址") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = settings.apiKey,
+                onValueChange = { onChange(settings.copy(apiKey = it.take(240))) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("API Key") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation()
+            )
+        }
+    }
+}
+
+@Composable
+private fun EncouragerAgentSettingsCard(
+    settings: EncouragerAgentSettings,
+    onChange: (EncouragerAgentSettings) -> Unit
+) {
+    ElevatedCard(
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("鼓励师 Agent", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (settings.enabled) "已启用" else "未启用",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = settings.enabled,
+                    onCheckedChange = { onChange(settings.copy(enabled = it)) }
+                )
+            }
+            OutlinedTextField(
+                value = settings.name,
+                onValueChange = { onChange(settings.copy(name = it.take(24))) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Agent 名称") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = settings.prompt,
+                onValueChange = { onChange(settings.copy(prompt = it.take(500))) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("鼓励提示词") },
+                minLines = 3
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingLine(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.width(12.dp))
+        Text(
+            text = value,
+            modifier = Modifier.weight(1f),
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.End
+        )
+    }
+}
+
+@Composable
 private fun RecordDialog(
     pendingRecord: PendingRecord,
     template: RecordTemplate,
@@ -1684,6 +1935,15 @@ private data class PendingRecord(
     val focusMinutes: Int,
     val templateId: String
 )
+
+private fun AppState.withNextRevisionFrom(previous: AppState): AppState {
+    val normalizedNext = copy(projectRevision = previous.projectRevision)
+    return if (normalizedNext == previous) {
+        normalizedNext
+    } else {
+        normalizedNext.copy(projectRevision = previous.projectRevision + 1)
+    }
+}
 
 private fun TimerMode.label(): String = when (this) {
     TimerMode.Focus -> "专注"

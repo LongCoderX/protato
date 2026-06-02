@@ -68,6 +68,19 @@ data class PomodoroRecord(
     val answers: List<FieldAnswer>
 )
 
+data class LlmImportSettings(
+    val provider: String = "",
+    val modelName: String = "",
+    val endpoint: String = "",
+    val apiKey: String = ""
+)
+
+data class EncouragerAgentSettings(
+    val enabled: Boolean = false,
+    val name: String = "鼓励师",
+    val prompt: String = "用温和、具体、不油腻的方式鼓励我继续完成下一轮番茄。"
+)
+
 data class AppState(
     val todos: List<TodoItem> = emptyList(),
     val templates: List<RecordTemplate> = listOf(defaultTemplate()),
@@ -77,7 +90,11 @@ data class AppState(
     val longBreakMinutes: Int = 15,
     val selectedTemplateId: String = defaultTemplate().id,
     val activeSession: TimerSession? = null,
-    val pendingRecord: PendingPomodoroRecord? = null
+    val pendingRecord: PendingPomodoroRecord? = null,
+    val projectRevision: Int = 1,
+    val nickname: String = "",
+    val llmImport: LlmImportSettings = LlmImportSettings(),
+    val encouragerAgent: EncouragerAgentSettings = EncouragerAgentSettings()
 )
 
 fun defaultTemplate(): RecordTemplate {
