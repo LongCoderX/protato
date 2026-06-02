@@ -12,6 +12,12 @@ android {
     val releaseKeystorePassword = System.getenv("PROTATO_KEYSTORE_PASSWORD")
     val releaseKeyAlias = System.getenv("PROTATO_KEY_ALIAS")
     val releaseKeyPassword = System.getenv("PROTATO_KEY_PASSWORD")
+    val hasReleaseSigning = listOf(
+        releaseKeystorePath,
+        releaseKeystorePassword,
+        releaseKeyAlias,
+        releaseKeyPassword
+    ).all { !it.isNullOrBlank() }
 
     defaultConfig {
         applicationId = "com.protato.app"
@@ -22,9 +28,9 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            if (!releaseKeystorePath.isNullOrBlank()) {
-                storeFile = file(releaseKeystorePath)
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseKeystorePath!!)
                 storePassword = releaseKeystorePassword
                 keyAlias = releaseKeyAlias
                 keyPassword = releaseKeyPassword
@@ -35,7 +41,9 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("release")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
@@ -47,6 +55,10 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    lint {
+        disable += "NullSafeMutableLiveData"
     }
 }
 
