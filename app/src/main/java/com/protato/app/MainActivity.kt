@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -45,10 +46,12 @@ import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Label
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Save
@@ -109,12 +112,17 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.startForegroundService
@@ -122,6 +130,7 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.ParseException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -346,11 +355,9 @@ fun ProtatoApp() {
                         providers = appState.llmProviders,
                         agents = appState.agents,
                         nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
-                        onAdd = { title ->
+                        onAdd = { todo ->
                             setAppState(appState.copy(
-                                todos = listOf(
-                                    TodoItem(id = newId(), title = title.trim())
-                                ) + appState.todos
+                                todos = listOf(todo) + appState.todos
                             ))
                         },
                         onToggle = { item ->
@@ -822,11 +829,7 @@ private fun TodoSelectDialog(
                             selected = selectedTodoId == todo.id,
                             onClick = { onSelected(todo.id) },
                             label = {
-                                Text(
-                                    todo.title,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                TodoChoiceLabel(todo)
                             },
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -877,6 +880,30 @@ private fun TemplateSelectDialog(
 }
 
 @Composable
+private fun TodoChoiceLabel(todo: TodoItem) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            todo.title,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        val metadata = buildList {
+            todo.dueDate?.let { add(formatDayLabel(it)) }
+            addAll(todo.tags.map { "#$it" })
+        }.joinToString(" · ")
+        if (metadata.isNotBlank()) {
+            Text(
+                metadata,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
 private fun TimerRing(progress: Float) {
     val color = MaterialTheme.colorScheme.primary
     val track = MaterialTheme.colorScheme.surfaceVariant
@@ -905,7 +932,7 @@ private fun TodoScreen(
     providers: List<LlmProviderSettings>,
     agents: List<AgentSettings>,
     nickname: String,
-    onAdd: (String) -> Unit,
+    onAdd: (TodoItem) -> Unit,
     onToggle: (TodoItem) -> Unit,
     onDelete: (TodoItem) -> Unit,
     onUpdate: (TodoItem) -> Unit,
@@ -913,10 +940,25 @@ private fun TodoScreen(
     onAddMany: (List<String>) -> Unit
 ) {
     var title by rememberSaveable { mutableStateOf("") }
+    var tagsText by rememberSaveable { mutableStateOf("") }
+    var dueDateText by rememberSaveable { mutableStateOf("") }
     var editingTodo by remember { mutableStateOf<TodoItem?>(null) }
     var showingAiTodo by remember { mutableStateOf(false) }
     var selectedTodoIds by rememberSaveable { mutableStateOf(setOf<String>()) }
+    var selectedTag by rememberSaveable { mutableStateOf<String?>(null) }
     val selecting = selectedTodoIds.isNotEmpty()
+    val availableTags = remember(todos) {
+        todos.flatMap { it.tags }
+            .distinctBy { it.lowercase(Locale.getDefault()) }
+            .sorted()
+    }
+    val visibleTodos = remember(todos, selectedTag) {
+        selectedTag?.let { tag ->
+            todos.filter { todo -> todo.tags.any { it.equals(tag, ignoreCase = true) } }
+        } ?: todos
+    }
+    val normalizedDueDate = normalizedTodoDate(dueDateText)
+    val dateIsValid = dueDateText.isBlank() || normalizedDueDate != null
 
     Column(
         modifier = Modifier
@@ -940,32 +982,72 @@ private fun TodoScreen(
                     }
                 )
             } else {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedTextField(
-                        value = title,
-                        onValueChange = { title = it },
-                        modifier = Modifier.weight(1f),
-                        label = { Text("新待办") },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
-                    )
-                    FilledIconButton(
-                        onClick = {
-                            if (title.isNotBlank()) {
-                                onAdd(title)
-                                title = ""
-                            }
-                        }
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Outlined.Add, contentDescription = "添加")
+                        OutlinedTextField(
+                            value = title,
+                            onValueChange = { title = it },
+                            modifier = Modifier.weight(1f),
+                            label = { Text("新待办") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
+                        )
+                        FilledIconButton(
+                            onClick = {
+                                if (title.isNotBlank() && dateIsValid) {
+                                    onAdd(
+                                        TodoItem(
+                                            id = newId(),
+                                            title = title.trim(),
+                                            tags = parseTodoTags(tagsText),
+                                            dueDate = normalizedDueDate
+                                        )
+                                    )
+                                    title = ""
+                                    tagsText = ""
+                                    dueDateText = ""
+                                }
+                            }
+                        ) {
+                            Icon(Icons.Outlined.Add, contentDescription = "添加")
+                        }
+                        OutlinedButton(onClick = { showingAiTodo = true }) {
+                            Text("AI")
+                        }
                     }
-                    OutlinedButton(onClick = { showingAiTodo = true }) {
-                        Text("AI")
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = dueDateText,
+                            onValueChange = { dueDateText = it.filter { char -> char.isDigit() || char == '-' }.take(10) },
+                            modifier = Modifier.weight(0.9f),
+                            label = { Text("日期 yyyy-MM-dd") },
+                            singleLine = true,
+                            isError = !dateIsValid,
+                            leadingIcon = { Icon(Icons.Outlined.DateRange, contentDescription = null) }
+                        )
+                        OutlinedTextField(
+                            value = tagsText,
+                            onValueChange = { tagsText = it.take(120) },
+                            modifier = Modifier.weight(1.1f),
+                            label = { Text("标签") },
+                            singleLine = true,
+                            leadingIcon = { Icon(Icons.Outlined.Label, contentDescription = null) }
+                        )
                     }
                 }
+            }
+            if (availableTags.isNotEmpty()) {
+                TodoTagFilterBar(
+                    tags = availableTags,
+                    selectedTag = selectedTag,
+                    onSelected = { selectedTag = it }
+                )
             }
         }
 
@@ -976,12 +1058,18 @@ private fun TodoScreen(
             contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            if (todos.isEmpty()) {
+            if (visibleTodos.isEmpty()) {
                 item {
-                    EmptyState("还没有待办，先添加一个明确的小目标。")
+                    EmptyState(
+                        if (selectedTag == null) {
+                            "还没有待办，先添加一个明确的小目标。"
+                        } else {
+                            "这个标签下还没有待办。"
+                        }
+                    )
                 }
             }
-            items(todos, key = { it.id }) { todo ->
+            items(visibleTodos, key = { it.id }) { todo ->
                 TodoRow(
                     todo = todo,
                     selected = todo.id in selectedTodoIds,
@@ -1004,8 +1092,8 @@ private fun TodoScreen(
         TodoEditorDialog(
             todo = todo,
             onDismiss = { editingTodo = null },
-            onSave = { updatedTitle ->
-                onUpdate(todo.copy(title = updatedTitle))
+            onSave = { updatedTodo ->
+                onUpdate(updatedTodo)
                 editingTodo = null
             }
         )
@@ -1114,6 +1202,40 @@ private fun TodoAiDialog(
     )
 }
 
+@Composable
+private fun TodoTagFilterBar(
+    tags: List<String>,
+    selectedTag: String?,
+    onSelected: (String?) -> Unit
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        item {
+            FilterChip(
+                selected = selectedTag == null,
+                onClick = { onSelected(null) },
+                label = { Text("全部") }
+            )
+        }
+        items(tags, key = { it }) { tag ->
+            FilterChip(
+                selected = selectedTag == tag,
+                onClick = { onSelected(if (selectedTag == tag) null else tag) },
+                label = { Text("#$tag") },
+                leadingIcon = {
+                    Icon(
+                        Icons.Outlined.Label,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun TodoRow(
@@ -1175,17 +1297,95 @@ private fun TodoRow(
                         if (selecting) onToggleSelected() else onToggle()
                     }
                 )
-                Text(
-                    text = todo.title,
+                Column(
                     modifier = Modifier.weight(1f),
-                    textDecoration = if (todo.completed) TextDecoration.LineThrough else TextDecoration.None,
-                    color = if (todo.completed) {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    }
-                )
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = todo.title,
+                        textDecoration = if (todo.completed) TextDecoration.LineThrough else TextDecoration.None,
+                        color = if (todo.completed) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    TodoMetadataRow(todo = todo)
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun TodoMetadataRow(todo: TodoItem) {
+    if (todo.dueDate == null && todo.tags.isEmpty()) return
+
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        todo.dueDate?.let { dueDate ->
+            item {
+                TodoDateChip(dueDate)
+            }
+        }
+        items(todo.tags, key = { it }) { tag ->
+            TodoTagChip(tag)
+        }
+    }
+}
+
+@Composable
+private fun TodoDateChip(dueDate: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(
+                Icons.Outlined.DateRange,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp)
+            )
+            Text(
+                formatDayLabel(dueDate),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+@Composable
+private fun TodoTagChip(tag: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(
+                Icons.Outlined.Label,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp)
+            )
+            Text(
+                "#$tag",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold
+            )
         }
     }
 }
@@ -1253,16 +1453,28 @@ private fun TodoSelectionBar(
 private fun TodoEditorDialog(
     todo: TodoItem,
     onDismiss: () -> Unit,
-    onSave: (String) -> Unit
+    onSave: (TodoItem) -> Unit
 ) {
     var title by rememberSaveable(todo.id) { mutableStateOf(todo.title) }
+    var tagsText by rememberSaveable(todo.id) { mutableStateOf(todo.tags.joinToString("，")) }
+    var dueDateText by rememberSaveable(todo.id) { mutableStateOf(todo.dueDate.orEmpty()) }
+    val normalizedDueDate = normalizedTodoDate(dueDateText)
+    val dateIsValid = dueDateText.isBlank() || normalizedDueDate != null
 
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             TextButton(
-                enabled = title.isNotBlank(),
-                onClick = { onSave(title.trim()) }
+                enabled = title.isNotBlank() && dateIsValid,
+                onClick = {
+                    onSave(
+                        todo.copy(
+                            title = title.trim(),
+                            tags = parseTodoTags(tagsText),
+                            dueDate = normalizedDueDate
+                        )
+                    )
+                }
             ) {
                 Icon(Icons.Outlined.Save, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
@@ -1276,14 +1488,33 @@ private fun TodoEditorDialog(
         },
         title = { Text("编辑待办") },
         text = {
-            OutlinedTextField(
-                value = title,
-                onValueChange = { title = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("待办内容") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
-            )
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("待办内容") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
+                )
+                OutlinedTextField(
+                    value = dueDateText,
+                    onValueChange = { dueDateText = it.filter { char -> char.isDigit() || char == '-' }.take(10) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("日期 yyyy-MM-dd") },
+                    singleLine = true,
+                    isError = !dateIsValid,
+                    leadingIcon = { Icon(Icons.Outlined.DateRange, contentDescription = null) }
+                )
+                OutlinedTextField(
+                    value = tagsText,
+                    onValueChange = { tagsText = it.take(120) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("标签，逗号分隔") },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Outlined.Label, contentDescription = null) }
+                )
+            }
         }
     )
 }
@@ -1562,8 +1793,25 @@ private fun RecordsScreen(
     var viewingSummary by remember { mutableStateOf<DailySummary?>(null) }
     var generatingSummary by remember { mutableStateOf(false) }
     val todayKey = dayKey(System.currentTimeMillis())
-    val todayRecords = records.filter { dayKey(it.endedAt) == todayKey }
-    val todaySummary = summaries.firstOrNull { it.dayKey == todayKey }
+    val availableDayKeys = remember(records, summaries, todayKey) {
+        (records.map { dayKey(it.endedAt) } + summaries.map { it.dayKey } + todayKey)
+            .distinct()
+            .sortedDescending()
+    }
+    var selectedDayKey by rememberSaveable { mutableStateOf(todayKey) }
+    val effectiveSelectedDayKey = selectedDayKey
+        .takeIf { it in availableDayKeys }
+        ?: availableDayKeys.firstOrNull()
+        ?: todayKey
+    LaunchedEffect(effectiveSelectedDayKey) {
+        if (selectedDayKey != effectiveSelectedDayKey) {
+            selectedDayKey = effectiveSelectedDayKey
+        }
+    }
+    val selectedDayRecords = records
+        .filter { dayKey(it.endedAt) == effectiveSelectedDayKey }
+        .sortedBy { it.endedAt }
+    val selectedDaySummary = summaries.firstOrNull { it.dayKey == effectiveSelectedDayKey }
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -1575,42 +1823,60 @@ private fun RecordsScreen(
                 Header(title = "番茄记录", subtitle = "每次专注结束后的完整内容会沉淀在这里")
             }
             item {
+                DaySwitcher(
+                    dayKeys = availableDayKeys,
+                    selectedDayKey = effectiveSelectedDayKey,
+                    records = records,
+                    onSelected = { selectedDayKey = it }
+                )
+            }
+            item {
                 DailySummaryCard(
-                    records = todayRecords,
-                    summary = todaySummary,
+                    dayKey = effectiveSelectedDayKey,
+                    records = selectedDayRecords,
+                    summary = selectedDaySummary,
                     loading = generatingSummary,
                     onGenerate = {
                         scope.launch {
                             generatingSummary = true
                             val summary = runCatching {
                                 generateDailySummary(
-                                    dayKey = todayKey,
-                                    records = todayRecords,
+                                    dayKey = effectiveSelectedDayKey,
+                                    records = selectedDayRecords,
                                     templates = templates,
                                     providers = providers,
                                     agents = agents,
                                     nickname = nickname
                                 )
                             }.getOrElse {
-                                localDailySummary(todayKey, todayRecords, nickname)
+                                localDailySummary(effectiveSelectedDayKey, selectedDayRecords, nickname)
                             }
                             onSaveSummary(summary)
                             viewingSummary = summary
                             generatingSummary = false
                         }
                     },
-                    onOpen = { todaySummary?.let { viewingSummary = it } }
+                    onOpen = { selectedDaySummary?.let { viewingSummary = it } }
                 )
             }
-            if (records.isEmpty()) {
+            if (selectedDayRecords.isEmpty()) {
                 item {
-                    EmptyState("完成一轮专注后，记录会出现在这里。")
+                    EmptyState("这一天还没有记录。切换日期，或完成一轮专注后再回来看看。")
                 }
             } else {
-                items(records, key = { it.id }) { record ->
-                    RecordCard(
+                item {
+                    Text(
+                        "时间轴",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                items(selectedDayRecords, key = { it.id }) { record ->
+                    TimelineRecordItem(
                         record = record,
                         template = templates.firstOrNull { it.id == record.templateId },
+                        isFirst = record.id == selectedDayRecords.first().id,
+                        isLast = record.id == selectedDayRecords.last().id,
                         onEdit = { editingRecord = record }
                     )
                 }
@@ -1639,7 +1905,39 @@ private fun RecordsScreen(
 }
 
 @Composable
+private fun DaySwitcher(
+    dayKeys: List<String>,
+    selectedDayKey: String,
+    records: List<PomodoroRecord>,
+    onSelected: (String) -> Unit
+) {
+    LazyRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        items(dayKeys, key = { it }) { key ->
+            val count = records.count { dayKey(it.endedAt) == key }
+            FilterChip(
+                selected = selectedDayKey == key,
+                onClick = { onSelected(key) },
+                label = {
+                    Text(
+                        "${formatDayLabel(key)} · $count",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
+                leadingIcon = {
+                    Text(if (key == dayKey(System.currentTimeMillis())) "☀️" else "📅")
+                }
+            )
+        }
+    }
+}
+
+@Composable
 private fun DailySummaryCard(
+    dayKey: String,
     records: List<PomodoroRecord>,
     summary: DailySummary?,
     loading: Boolean,
@@ -1657,7 +1955,11 @@ private fun DailySummaryCard(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("今日总结 Agent", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${formatDayLabel(dayKey)} 总结 Agent",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
                     Text(
                         "${records.size} 次专注 · $focusMinutes 分钟 · $focusedTodos 个对象",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1678,7 +1980,7 @@ private fun DailySummaryCard(
                 Text(
                     when {
                         loading -> "生成中"
-                        summary == null -> "生成今日总结"
+                        summary == null -> "生成这天总结"
                         else -> "重新生成"
                     }
                 )
@@ -1708,94 +2010,284 @@ private fun DailySummaryDialog(summary: DailySummary, onDismiss: () -> Unit) {
                     "${summary.pomodoroCount} 个番茄 · ${summary.focusMinutes} 分钟 · ${formatTime(summary.generatedAt)}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Text(summary.content)
+                MarkdownText(summary.content)
             }
         }
     )
 }
 
 @Composable
-private fun RecordCard(
+private fun TimelineRecordItem(
     record: PomodoroRecord,
     template: RecordTemplate?,
+    isFirst: Boolean,
+    isLast: Boolean,
     onEdit: () -> Unit
 ) {
     var expanded by rememberSaveable(record.id) { mutableStateOf(false) }
     val isBoundToTodo = record.todoId != null
     val answerCount = record.answers.size
 
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { expanded = !expanded },
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top
     ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.Top) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RecordTodoChip(title = record.todoTitle, bound = isBoundToTodo)
+        Column(
+            modifier = Modifier.width(42.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .height(if (isFirst) 10.dp else 18.dp)
+                    .background(
+                        if (isFirst) Color.Transparent else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+                    )
+            )
+            Surface(
+                modifier = Modifier.size(18.dp),
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.primary
+            ) {}
+            Box(
+                modifier = Modifier
+                    .width(2.dp)
+                    .height(if (isLast) 10.dp else 88.dp)
+                    .background(
+                        if (isLast) Color.Transparent else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+                    )
+            )
+        }
+        ElevatedCard(
+            shape = RoundedCornerShape(8.dp),
+            modifier = Modifier
+                .weight(1f)
+                .clickable { expanded = !expanded },
+            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.Top) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            formatClockTime(record.endedAt),
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            record.todoTitle,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RecordTodoChip(title = record.todoTitle, bound = isBoundToTodo)
+                        }
+                        Text(
+                            "${record.focusMinutes} 分钟 · ${record.templateName} · $answerCount 条回答",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
                     }
-                    Text(
-                        "${record.focusMinutes} 分钟 · ${formatTime(record.endedAt)}",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        "${record.templateName} · $answerCount 条回答",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyMedium
-                    )
+                    IconButton(onClick = onEdit) {
+                        Icon(Icons.Outlined.Edit, contentDescription = "编辑记录")
+                    }
                 }
-                IconButton(onClick = onEdit) {
-                    Icon(Icons.Outlined.Edit, contentDescription = "编辑记录")
-                }
-            }
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    if (expanded) "收起模板回答" else "展开模板回答",
-                    color = MaterialTheme.colorScheme.tertiary,
-                    fontWeight = FontWeight.Medium
-                )
-                Icon(
-                    if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.tertiary
-                )
-            }
-
-            if (expanded) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.tertiaryContainer)
-                        .padding(14.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    record.answers.forEach { answer ->
-                        val title = template?.fields?.firstOrNull { it.id == answer.fieldId }?.title ?: "字段"
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(title, fontWeight = FontWeight.SemiBold)
-                            Text(
-                                answer.value.ifBlank { "未填写" },
-                                color = MaterialTheme.colorScheme.onTertiaryContainer
-                            )
+                    Text(
+                        if (expanded) "收起记录详情" else "展开记录详情",
+                        color = MaterialTheme.colorScheme.tertiary,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Icon(
+                        if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.tertiary
+                    )
+                }
+
+                if (expanded) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.tertiaryContainer)
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        record.answers.forEach { answer ->
+                            val title = template?.fields?.firstOrNull { it.id == answer.fieldId }?.title ?: "字段"
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(title, fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    answer.value.ifBlank { "未填写" },
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                                )
+                            }
                         }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun MarkdownText(content: String) {
+    val lines = content.lines()
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        lines.forEach { rawLine ->
+            val line = rawLine.trim()
+            when {
+                line.isBlank() -> Spacer(Modifier.height(2.dp))
+                line.matches(Regex("-{3,}|\\*{3,}|_{3,}")) -> HorizontalDivider()
+                line.startsWith("### ") -> MarkdownLine(
+                    text = line.removePrefix("### "),
+                    weight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                line.startsWith("## ") -> MarkdownLine(
+                    text = line.removePrefix("## "),
+                    style = MaterialTheme.typography.titleMedium,
+                    weight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                line.startsWith("# ") -> MarkdownLine(
+                    text = line.removePrefix("# "),
+                    style = MaterialTheme.typography.titleLarge,
+                    weight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                line.startsWith(">") -> Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    MarkdownLine(
+                        text = line.removePrefix(">").trim(),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                line.isMarkdownBullet() -> Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Text("•", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                    MarkdownLine(text = line.removeMarkdownBullet(), modifier = Modifier.weight(1f))
+                }
+                line.isMarkdownNumberedItem() -> {
+                    val number = line.substringBefore(".")
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Text("$number.", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        MarkdownLine(
+                            text = line.substringAfter(".").trim(),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+                else -> MarkdownLine(text = line)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MarkdownLine(
+    text: String,
+    modifier: Modifier = Modifier,
+    style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.bodyMedium,
+    weight: FontWeight? = null,
+    color: Color = MaterialTheme.colorScheme.onSurface
+) {
+    Text(
+        text = markdownInlineText(text),
+        modifier = modifier,
+        style = style,
+        fontWeight = weight,
+        color = color
+    )
+}
+
+@Composable
+private fun markdownInlineText(text: String): AnnotatedString {
+    val strong = SpanStyle(fontWeight = FontWeight.Bold)
+    val emphasis = SpanStyle(fontStyle = FontStyle.Italic)
+    val code = SpanStyle(
+        color = MaterialTheme.colorScheme.primary,
+        background = MaterialTheme.colorScheme.surfaceVariant
+    )
+    val deleted = SpanStyle(textDecoration = TextDecoration.LineThrough)
+    return buildAnnotatedString {
+        appendMarkdownSegments(
+            text = text,
+            markers = listOf(
+                MarkdownMarker("**", strong),
+                MarkdownMarker("__", strong),
+                MarkdownMarker("~~", deleted),
+                MarkdownMarker("`", code),
+                MarkdownMarker("*", emphasis),
+                MarkdownMarker("_", emphasis)
+            )
+        )
+    }
+}
+
+private data class MarkdownMarker(
+    val token: String,
+    val style: SpanStyle
+)
+
+private fun AnnotatedString.Builder.appendMarkdownSegments(
+    text: String,
+    markers: List<MarkdownMarker>
+) {
+    var index = 0
+    while (index < text.length) {
+        val marker = markers.firstOrNull { text.startsWith(it.token, index) }
+        if (marker == null) {
+            append(text[index].toString())
+            index += 1
+            continue
+        }
+        val start = index + marker.token.length
+        val end = text.indexOf(marker.token, start)
+        if (end <= start) {
+            append(marker.token)
+            index += marker.token.length
+            continue
+        }
+        withStyle(marker.style) {
+            append(text.substring(start, end))
+        }
+        index = end + marker.token.length
+    }
+}
+
+private fun String.isMarkdownBullet(): Boolean {
+    return startsWith("- ") || startsWith("* ") || startsWith("• ")
+}
+
+private fun String.removeMarkdownBullet(): String {
+    return drop(2).trim()
+}
+
+private fun String.isMarkdownNumberedItem(): Boolean {
+    return matches(Regex("\\d+\\.\\s+.+"))
 }
 
 @Composable
@@ -2920,7 +3412,7 @@ private fun RecordTodoSelector(
                 FilterChip(
                     selected = selectedTodoId == todo.id,
                     onClick = { onSelected(todo.id) },
-                    label = { Text(todo.title) }
+                    label = { TodoChoiceLabel(todo) }
                 )
             }
         }
@@ -3076,13 +3568,14 @@ private suspend fun generateDailySummary(
         append(agent.prompt.withNickname(nickname))
         append("\n你是 Protato 的每日番茄总结 Agent。你要把当天番茄记录汇总成一篇自然、清晰、有洞察的中文总结文章。")
         append(" 必须包含：番茄数量、总专注时长、专注对象/次数、今天状态评价、一个具体改进建议，以及最后真诚有力的鼓励。")
+        append(" 请使用 Markdown 输出，可以使用二级标题、列表、加粗和少量贴切 emoji，让总结更生动但不要花哨。")
         append(" 不要编造记录之外的事实。")
     }
     val userPrompt = buildString {
         append("日期：$dayKey\n")
         append("用户昵称：${nickname.ifBlank { DEFAULT_NICKNAME }}\n")
         append(records.toDailySummaryContext(templates))
-        append("\n请写成 500 字以内的总结文章。")
+        append("\n请写成 500 字以内的 Markdown 总结。")
     }
     val content = requestLlmChat(
         provider = provider,
@@ -3109,9 +3602,27 @@ private fun localDailySummary(
         .ifBlank { "暂无明确对象" }
     val name = nickname.ifBlank { DEFAULT_NICKNAME }
     val content = if (records.isEmpty()) {
-        "$name，今天还没有番茄记录。没关系，总结不是为了责备你，而是为了帮你重新看见下一步。先选一个足够小的任务，完成一轮就好。"
+        """
+        ## 🌱 今天还没有番茄记录
+
+        $name，没关系。总结不是为了责备你，而是为了帮你重新看见下一步。
+
+        - 先选一个足够小的任务
+        - 完成一轮就好
+        - 把第一条记录留在时间轴上
+        """.trimIndent()
     } else {
-        "$name，今天你完成了 ${records.size} 个番茄，总专注 $totalMinutes 分钟，主要投入在：$topTargets。\n\n从节奏看，你今天已经有了真实的推进，不只是“想做”，而是把时间放进了具体事情里。接下来可以复盘一下：哪一轮最顺，哪一轮最容易分心，然后把明天第一轮番茄安排给最重要但最容易拖延的那件事。\n\n请认真收下这份完成感。每一个番茄都不大，但它们合在一起，就是你把生活重新握回手里的证据。"
+        """
+        ## 🍅 今天的专注轨迹
+
+        $name，今天你完成了 **${records.size} 个番茄**，总专注 **$totalMinutes 分钟**。
+
+        - 主要投入：$topTargets
+        - 节奏观察：你已经把时间放进了具体事情里，而不只是停在“想做”
+        - 下一步：复盘哪一轮最顺、哪一轮最容易分心，再把下一轮番茄安排给最重要的小目标
+
+        > 请认真收下这份完成感。每一个番茄都不大，但它们合在一起，就是你把生活重新握回手里的证据。✨
+        """.trimIndent()
     }
     return DailySummary(
         dayKey = dayKey,
@@ -3262,8 +3773,45 @@ private fun formatTime(value: Long): String {
     return SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(value))
 }
 
+private fun formatClockTime(value: Long): String {
+    return SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(value))
+}
+
 private fun dayKey(value: Long): String {
     return SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date(value))
+}
+
+private fun normalizedTodoDate(value: String): String? {
+    val trimmed = value.trim()
+    if (trimmed.isBlank() || !trimmed.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) return null
+    val parser = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).apply {
+        isLenient = false
+    }
+    return try {
+        dayKey(parser.parse(trimmed)?.time ?: return null)
+    } catch (_: ParseException) {
+        null
+    }
+}
+
+private fun parseTodoTags(value: String): List<String> {
+    return value
+        .split(Regex("[,，、\\s]+"))
+        .map { it.trim().removePrefix("#").take(24) }
+        .filter { it.isNotBlank() }
+        .distinctBy { it.lowercase(Locale.getDefault()) }
+}
+
+private fun formatDayLabel(key: String): String {
+    val today = dayKey(System.currentTimeMillis())
+    if (key == today) return "今天"
+    val parser = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+    val formatter = SimpleDateFormat("MM月dd日", Locale.getDefault())
+    return try {
+        formatter.format(parser.parse(key) ?: return key)
+    } catch (_: ParseException) {
+        key
+    }
 }
 
 private fun emptyTemplate(): RecordTemplate {

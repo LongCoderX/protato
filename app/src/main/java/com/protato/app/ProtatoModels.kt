@@ -14,7 +14,9 @@ data class TodoItem(
     val id: String,
     val title: String,
     val completed: Boolean = false,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val tags: List<String> = emptyList(),
+    val dueDate: String? = null
 )
 
 data class TemplateField(
