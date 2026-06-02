@@ -37,6 +37,25 @@ data class FieldAnswer(
     val value: String
 )
 
+data class TimerSession(
+    val mode: TimerMode,
+    val todoId: String?,
+    val todoTitle: String,
+    val startedAt: Long,
+    val endsAt: Long,
+    val totalSeconds: Int,
+    val templateId: String
+)
+
+data class PendingPomodoroRecord(
+    val todoId: String?,
+    val todoTitle: String,
+    val startedAt: Long,
+    val endedAt: Long,
+    val focusMinutes: Int,
+    val templateId: String
+)
+
 data class PomodoroRecord(
     val id: String,
     val todoId: String?,
@@ -56,7 +75,9 @@ data class AppState(
     val focusMinutes: Int = 25,
     val shortBreakMinutes: Int = 5,
     val longBreakMinutes: Int = 15,
-    val selectedTemplateId: String = defaultTemplate().id
+    val selectedTemplateId: String = defaultTemplate().id,
+    val activeSession: TimerSession? = null,
+    val pendingRecord: PendingPomodoroRecord? = null
 )
 
 fun defaultTemplate(): RecordTemplate {

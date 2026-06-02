@@ -1,8 +1,14 @@
 package com.protato.app
 
+import android.Manifest
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -67,7 +73,6 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -86,6 +91,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.core.content.ContextCompat.startForegroundService
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -93,10 +100,26 @@ import java.util.UUID
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        requestNotificationPermissionIfNeeded()
         setContent {
             ProtatoApp()
+        }
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val granted = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.POST_NOTIFICATIONS
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!granted) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 }
@@ -115,10 +138,7 @@ fun ProtatoApp() {
     var appState by remember { mutableStateOf(store.load()) }
     var selectedTodoId by rememberSaveable { mutableStateOf<String?>(null) }
     var timerMode by rememberSaveable { mutableStateOf(TimerMode.Focus) }
-    var isRunning by rememberSaveable { mutableStateOf(false) }
-    var remainingSeconds by rememberSaveable { mutableIntStateOf(appState.focusMinutes * 60) }
-    var sessionStartedAt by rememberSaveable { mutableLongStateOf(0L) }
-    var pendingRecord by remember { mutableStateOf<PendingRecord?>(null) }
+    var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
     val selectedTodo = appState.todos.firstOrNull { it.id == selectedTodoId }
     val selectedTemplate = appState.templates.firstOrNull { it.id == appState.selectedTemplateId }
@@ -130,30 +150,39 @@ fun ProtatoApp() {
         TimerMode.LongBreak -> appState.longBreakMinutes
     }
     val totalSeconds = durationMinutes * 60
+    val activeSession = appState.activeSession
+    val isRunning = activeSession != null
+    val remainingSeconds = activeSession?.remainingSeconds(nowMillis) ?: totalSeconds
+    val pendingRecord = appState.pendingRecord?.toPendingRecordUi()
 
     LaunchedEffect(appState) {
         store.save(appState)
     }
 
-    LaunchedEffect(timerMode, appState.focusMinutes, appState.shortBreakMinutes, appState.longBreakMinutes) {
-        if (!isRunning) remainingSeconds = totalSeconds
+    LaunchedEffect(activeSession?.mode) {
+        activeSession?.let { timerMode = it.mode }
     }
 
-    LaunchedEffect(isRunning, remainingSeconds) {
-        if (isRunning && remainingSeconds > 0) {
-            delay(1000)
-            remainingSeconds -= 1
-        } else if (isRunning && remainingSeconds == 0) {
-            isRunning = false
-            if (timerMode == TimerMode.Focus) {
-                pendingRecord = PendingRecord(
-                    todoId = selectedTodo?.id,
-                    todoTitle = selectedTodo?.title ?: "未绑定任务",
-                    startedAt = sessionStartedAt.takeIf { it > 0L } ?: System.currentTimeMillis(),
-                    endedAt = System.currentTimeMillis(),
-                    focusMinutes = appState.focusMinutes
-                )
+    LaunchedEffect(activeSession?.endsAt) {
+        if (activeSession != null) {
+            context.startPomodoroService(ACTION_START_TIMER_SERVICE)
+            PomodoroAlarmScheduler(context).schedule(activeSession)
+        }
+    }
+
+    LaunchedEffect(activeSession?.endsAt) {
+        while (activeSession != null) {
+            nowMillis = System.currentTimeMillis()
+            if (activeSession.remainingSeconds(nowMillis) <= 0) {
+                val nextState = completeSession(appState)
+                appState = nextState
+                store.save(nextState)
+                PomodoroNotifications(context).cancelTimer()
+                PomodoroAlarmScheduler(context).cancel()
+                context.stopService(Intent(context, PomodoroTimerService::class.java))
+                break
             }
+            delay(1000)
         }
     }
 
@@ -193,42 +222,62 @@ fun ProtatoApp() {
                         onSelectedTodo = { selectedTodoId = it },
                         onModeChange = { mode ->
                             timerMode = mode
-                            isRunning = false
-                            remainingSeconds = when (mode) {
-                                TimerMode.Focus -> appState.focusMinutes
-                                TimerMode.ShortBreak -> appState.shortBreakMinutes
-                                TimerMode.LongBreak -> appState.longBreakMinutes
-                            } * 60
+                            appState = appState.copy(activeSession = null)
+                            PomodoroAlarmScheduler(context).cancel()
+                            context.startPomodoroService(ACTION_STOP_TIMER_SERVICE)
                         },
                         onStartPause = {
-                            if (!isRunning && timerMode == TimerMode.Focus && remainingSeconds == totalSeconds) {
-                                sessionStartedAt = System.currentTimeMillis()
+                            if (isRunning) {
+                                appState = appState.copy(activeSession = null)
+                                PomodoroAlarmScheduler(context).cancel()
+                                context.startPomodoroService(ACTION_STOP_TIMER_SERVICE)
+                            } else {
+                                val startedAt = System.currentTimeMillis()
+                                val session = TimerSession(
+                                    mode = timerMode,
+                                    todoId = selectedTodo?.id,
+                                    todoTitle = selectedTodo?.title ?: "未绑定任务",
+                                    startedAt = startedAt,
+                                    endsAt = startedAt + totalSeconds * 1000L,
+                                    totalSeconds = totalSeconds,
+                                    templateId = selectedTemplate.id
+                                )
+                                val nextState = appState.copy(activeSession = session)
+                                appState = nextState
+                                store.save(nextState)
+                                nowMillis = startedAt
+                                PomodoroAlarmScheduler(context).schedule(session)
+                                context.startPomodoroService(ACTION_START_TIMER_SERVICE)
                             }
-                            isRunning = !isRunning
                         },
                         onReset = {
-                            isRunning = false
-                            remainingSeconds = totalSeconds
+                            appState = appState.copy(activeSession = null)
+                            PomodoroAlarmScheduler(context).cancel()
+                            context.startPomodoroService(ACTION_STOP_TIMER_SERVICE)
                         },
                         onDismissRecord = {
-                            pendingRecord = null
-                            remainingSeconds = totalSeconds
+                            appState = appState.copy(pendingRecord = null)
+                            PomodoroNotifications(context).cancelCompleted()
                         },
                         onSaveRecord = { record, answers ->
+                            val template = appState.templates.firstOrNull { it.id == record.templateId }
+                                ?: selectedTemplate
                             val newRecord = PomodoroRecord(
                                 id = newId(),
                                 todoId = record.todoId,
                                 todoTitle = record.todoTitle,
-                                templateId = selectedTemplate.id,
-                                templateName = selectedTemplate.name,
+                                templateId = template.id,
+                                templateName = template.name,
                                 startedAt = record.startedAt,
                                 endedAt = record.endedAt,
                                 focusMinutes = record.focusMinutes,
                                 answers = answers
                             )
-                            appState = appState.copy(records = listOf(newRecord) + appState.records)
-                            pendingRecord = null
-                            remainingSeconds = totalSeconds
+                            appState = appState.copy(
+                                records = listOf(newRecord) + appState.records,
+                                pendingRecord = null
+                            )
+                            PomodoroNotifications(context).cancelCompleted()
                         }
                     )
 
@@ -376,9 +425,11 @@ private fun FocusScreen(
         }
 
         pendingRecord?.let { record ->
+            val recordTemplate = appState.templates.firstOrNull { it.id == record.templateId }
+                ?: selectedTemplate
             RecordDialog(
                 pendingRecord = record,
-                template = selectedTemplate,
+                template = recordTemplate,
                 onDismiss = onDismissRecord,
                 onSave = { answers ->
                     onSaveRecord(record, answers)
@@ -1043,7 +1094,8 @@ private data class PendingRecord(
     val todoTitle: String,
     val startedAt: Long,
     val endedAt: Long,
-    val focusMinutes: Int
+    val focusMinutes: Int,
+    val templateId: String
 )
 
 private fun TimerMode.label(): String = when (this) {
@@ -1057,7 +1109,7 @@ private fun FieldType.label(): String = when (this) {
     FieldType.ShortAnswer -> "简答"
 }
 
-private fun Int.asClock(): String {
+fun Int.asClock(): String {
     val minutes = this / 60
     val seconds = this % 60
     return "%02d:%02d".format(minutes, seconds)
@@ -1073,6 +1125,43 @@ private fun emptyTemplate(): RecordTemplate {
         name = "新模板",
         fields = emptyList()
     )
+}
+
+private fun PendingPomodoroRecord.toPendingRecordUi(): PendingRecord {
+    return PendingRecord(
+        todoId = todoId,
+        todoTitle = todoTitle,
+        startedAt = startedAt,
+        endedAt = endedAt,
+        focusMinutes = focusMinutes,
+        templateId = templateId
+    )
+}
+
+private fun completeSession(state: AppState): AppState {
+    val session = state.activeSession ?: return state
+    val pendingRecord = if (session.mode == TimerMode.Focus) {
+        PendingPomodoroRecord(
+            todoId = session.todoId,
+            todoTitle = session.todoTitle,
+            startedAt = session.startedAt,
+            endedAt = session.endsAt,
+            focusMinutes = session.totalSeconds / 60,
+            templateId = session.templateId
+        )
+    } else {
+        state.pendingRecord
+    }
+    return state.copy(activeSession = null, pendingRecord = pendingRecord)
+}
+
+private fun Context.startPomodoroService(action: String) {
+    val intent = Intent(this, PomodoroTimerService::class.java).setAction(action)
+    if (action == ACTION_START_TIMER_SERVICE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        startForegroundService(this, intent)
+    } else {
+        startService(intent)
+    }
 }
 
 private fun newId(): String = UUID.randomUUID().toString()

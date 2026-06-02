@@ -24,7 +24,9 @@ class ProtatoStore(context: Context) {
                 focusMinutes = root.optInt("focusMinutes", 25).coerceIn(1, 180),
                 shortBreakMinutes = root.optInt("shortBreakMinutes", 5).coerceIn(1, 60),
                 longBreakMinutes = root.optInt("longBreakMinutes", 15).coerceIn(1, 120),
-                selectedTemplateId = selectedTemplateId
+                selectedTemplateId = selectedTemplateId,
+                activeSession = root.optJSONObject("activeSession")?.toTimerSession(),
+                pendingRecord = root.optJSONObject("pendingRecord")?.toPendingRecord()
             )
         }.getOrElse { AppState() }
     }
@@ -38,6 +40,8 @@ class ProtatoStore(context: Context) {
             .put("shortBreakMinutes", state.shortBreakMinutes)
             .put("longBreakMinutes", state.longBreakMinutes)
             .put("selectedTemplateId", state.selectedTemplateId)
+            .put("activeSession", state.activeSession?.toJson() ?: JSONObject.NULL)
+            .put("pendingRecord", state.pendingRecord?.toJson() ?: JSONObject.NULL)
         file.writeText(root.toString(2))
     }
 }
@@ -92,6 +96,30 @@ private fun JSONArray.toAnswers(): List<FieldAnswer> = mapObjects { item ->
     )
 }.filter { it.fieldId.isNotBlank() }
 
+private fun JSONObject.toTimerSession(): TimerSession? {
+    val mode = runCatching { TimerMode.valueOf(optString("mode")) }.getOrNull() ?: return null
+    return TimerSession(
+        mode = mode,
+        todoId = optString("todoId").takeIf { it.isNotBlank() },
+        todoTitle = optString("todoTitle"),
+        startedAt = optLong("startedAt"),
+        endsAt = optLong("endsAt"),
+        totalSeconds = optInt("totalSeconds"),
+        templateId = optString("templateId")
+    ).takeIf { it.startedAt > 0L && it.endsAt > 0L && it.totalSeconds > 0 }
+}
+
+private fun JSONObject.toPendingRecord(): PendingPomodoroRecord? {
+    return PendingPomodoroRecord(
+        todoId = optString("todoId").takeIf { it.isNotBlank() },
+        todoTitle = optString("todoTitle"),
+        startedAt = optLong("startedAt"),
+        endedAt = optLong("endedAt"),
+        focusMinutes = optInt("focusMinutes"),
+        templateId = optString("templateId")
+    ).takeIf { it.startedAt > 0L && it.endedAt > 0L && it.focusMinutes > 0 }
+}
+
 private fun TodoItem.toJson(): JSONObject = JSONObject()
     .put("id", id)
     .put("title", title)
@@ -124,6 +152,23 @@ private fun PomodoroRecord.toJson(): JSONObject = JSONObject()
 private fun FieldAnswer.toJson(): JSONObject = JSONObject()
     .put("fieldId", fieldId)
     .put("value", value)
+
+private fun TimerSession.toJson(): JSONObject = JSONObject()
+    .put("mode", mode.name)
+    .put("todoId", todoId ?: "")
+    .put("todoTitle", todoTitle)
+    .put("startedAt", startedAt)
+    .put("endsAt", endsAt)
+    .put("totalSeconds", totalSeconds)
+    .put("templateId", templateId)
+
+private fun PendingPomodoroRecord.toJson(): JSONObject = JSONObject()
+    .put("todoId", todoId ?: "")
+    .put("todoTitle", todoTitle)
+    .put("startedAt", startedAt)
+    .put("endedAt", endedAt)
+    .put("focusMinutes", focusMinutes)
+    .put("templateId", templateId)
 
 private fun JSONArray.toStringList(): List<String> {
     return List(length()) { index -> optString(index) }.filter { it.isNotBlank() }
