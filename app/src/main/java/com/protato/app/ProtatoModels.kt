@@ -135,6 +135,9 @@ data class AppState(
 
 const val DEFAULT_NICKNAME = "专注者"
 const val DEFAULT_ENCOURAGER_PROMPT = "请称呼我为「{nickname}」，用温和、具体、不油腻的方式鼓励我继续完成下一轮番茄。"
+const val DEFAULT_TODO_AGENT_PROMPT = "请称呼我为「{nickname}」，把我随口说出的计划整理成短小、明确、可执行的待办。"
+const val DEFAULT_TEMPLATE_AGENT_PROMPT = "请称呼我为「{nickname}」，根据我的复盘目标生成简洁、好填写的番茄记录模板。"
+const val DEFAULT_RECORD_AGENT_PROMPT = "请称呼我为「{nickname}」，基于我的番茄记录做具体、温和、可执行的复盘建议。"
 const val AGENT_STYLE_PROMPT = "允许在自然语言回复中使用少量贴切 emoji 表情，让语气更有人味；不要堆砌，结构化输出场景必须优先遵守指定格式。"
 
 fun defaultLlmProviders(): List<LlmProviderSettings> {
@@ -153,6 +156,25 @@ fun defaultAgents(): List<AgentSettings> {
         AgentSettings(
             id = "agent-encourager",
             name = "鼓励师",
+            prompt = DEFAULT_ENCOURAGER_PROMPT,
+            permissions = AgentDataPermissions(dailyRecords = true)
+        ),
+        AgentSettings(
+            id = "agent-todo",
+            name = "待办整理 AI",
+            prompt = DEFAULT_TODO_AGENT_PROMPT,
+            permissions = AgentDataPermissions(todos = true)
+        ),
+        AgentSettings(
+            id = "agent-template",
+            name = "模板生成 AI",
+            prompt = DEFAULT_TEMPLATE_AGENT_PROMPT,
+            permissions = AgentDataPermissions(templates = true)
+        ),
+        AgentSettings(
+            id = "agent-record",
+            name = "记录复盘 AI",
+            prompt = DEFAULT_RECORD_AGENT_PROMPT,
             permissions = AgentDataPermissions(dailyRecords = true)
         )
     )

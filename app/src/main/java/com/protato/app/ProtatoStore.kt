@@ -21,6 +21,9 @@ class ProtatoStore(context: Context) {
             val legacyEncouragerAgent = root.optJSONObject("encouragerAgent")?.toEncouragerAgentSettings()
             val llmProviders = root.optJSONArray("llmProviders")?.toLlmProviders().orEmpty()
             val agents = root.optJSONArray("agents")?.toAgents().orEmpty()
+            val loadedAgents = agents.ifEmpty {
+                defaultAgents().withLegacyEncouragerAgent(legacyEncouragerAgent)
+            }.withDefaultAgents()
             AppState(
                 todos = root.optJSONArray("todos")?.toTodos().orEmpty(),
                 templates = templates.ifEmpty { listOf(defaultTemplate()) },
@@ -39,9 +42,7 @@ class ProtatoStore(context: Context) {
                 llmProviders = llmProviders.ifEmpty {
                     defaultLlmProviders().withLegacyLlmImport(legacyLlmImport)
                 },
-                agents = agents.ifEmpty {
-                    defaultAgents().withLegacyEncouragerAgent(legacyEncouragerAgent)
-                }
+                agents = loadedAgents
             )
         }.getOrElse { AppState() }
     }
@@ -340,6 +341,11 @@ private fun List<AgentSettings>.withLegacyEncouragerAgent(
         permissions = AgentDataPermissions(dailyRecords = true)
     )
     return listOf(legacyAgent) + filterNot { it.id == legacyAgent.id }
+}
+
+private fun List<AgentSettings>.withDefaultAgents(): List<AgentSettings> {
+    val existingIds = map { it.id }.toSet()
+    return this + defaultAgents().filterNot { it.id in existingIds }
 }
 
 private fun JSONArray.toStringList(): List<String> {

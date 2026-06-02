@@ -3391,7 +3391,9 @@ private fun AgentListCard(
                 agents.forEach { agent ->
                     AgentRow(
                         agent = agent,
-                        providerName = providers.firstOrNull { it.id == agent.providerId }?.name ?: "未选择 Provider",
+                        providerLabel = providers.firstOrNull {
+                            it.id == agent.providerId
+                        }?.agentProviderLabel() ?: "未选择模型",
                         onClick = { editingAgent = agent }
                     )
                 }
@@ -3420,7 +3422,7 @@ private fun AgentListCard(
 @Composable
 private fun AgentRow(
     agent: AgentSettings,
-    providerName: String,
+    providerLabel: String,
     onClick: () -> Unit
 ) {
     Surface(
@@ -3437,7 +3439,7 @@ private fun AgentRow(
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(agent.name, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "$providerName · ${agent.permissions.label()}",
+                    "$providerLabel · ${agent.permissions.label()}",
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -3509,7 +3511,9 @@ private fun AgentEditDialog(
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Text(
-                            providers.firstOrNull { it.id == agent.providerId }?.name ?: "选择 Provider",
+                            providers.firstOrNull {
+                                it.id == agent.providerId
+                            }?.agentProviderLabel() ?: "选择模型",
                             modifier = Modifier.weight(1f),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -3523,7 +3527,7 @@ private fun AgentEditDialog(
                     ) {
                         providers.forEach { provider ->
                             DropdownMenuItem(
-                                text = { Text(provider.name) },
+                                text = { Text(provider.agentProviderLabel()) },
                                 onClick = {
                                     agent = agent.copy(providerId = provider.id)
                                     providerMenuExpanded = false
@@ -3632,7 +3636,9 @@ private fun RecordChatDialog(
 ) {
     val scope = rememberCoroutineScope()
     val selectableAgents = agents.filter { it.enabled }.ifEmpty { agents }
-    var selectedAgentId by remember(record.id) { mutableStateOf(selectableAgents.firstOrNull()?.id) }
+    var selectedAgentId by remember(record.id, agents) {
+        mutableStateOf(selectRecordAgent(agents)?.id ?: selectableAgents.firstOrNull()?.id)
+    }
     var agentMenuExpanded by remember { mutableStateOf(false) }
     var input by remember(record.id) { mutableStateOf("") }
     var loading by remember(record.id) { mutableStateOf(false) }
@@ -4158,32 +4164,43 @@ private fun AgentDataPermissions.label(): String {
     return names.ifEmpty { listOf("无数据权限") }.joinToString("、")
 }
 
+private fun LlmProviderSettings.agentProviderLabel(): String {
+    return "$name · ${modelName.ifBlank { "未选择模型" }}"
+}
+
 private fun LlmProviderSettings.isConfiguredForChat(): Boolean {
     return endpoint.isNotBlank() && modelName.isNotBlank() && apiKey.isNotBlank()
 }
 
 private fun selectEncouragerAgent(agents: List<AgentSettings>): AgentSettings? {
     val enabledAgents = agents.filter { it.enabled }
-    return enabledAgents.firstOrNull { it.name.contains("鼓励") } ?: enabledAgents.firstOrNull()
+    return enabledAgents.firstOrNull { it.id == "agent-encourager" }
+        ?: enabledAgents.firstOrNull { it.name.contains("鼓励") }
+        ?: enabledAgents.firstOrNull { it.permissions.dailyRecords }
 }
 
 private fun selectDailySummaryAgent(agents: List<AgentSettings>): AgentSettings? {
-    val enabledAgents = agents.filter { it.enabled }
-    return enabledAgents.firstOrNull { it.name.contains("总结") && it.permissions.dailyRecords }
-        ?: enabledAgents.firstOrNull { it.permissions.dailyRecords }
-        ?: enabledAgents.firstOrNull()
+    return selectRecordAgent(agents)
 }
 
 private fun selectTodoAgent(agents: List<AgentSettings>): AgentSettings? {
     val enabledAgents = agents.filter { it.enabled }
-    return enabledAgents.firstOrNull { it.permissions.todos }
-        ?: enabledAgents.firstOrNull()
+    return enabledAgents.firstOrNull { it.id == "agent-todo" }
+        ?: enabledAgents.firstOrNull { it.permissions.todos }
 }
 
 private fun selectTemplateAgent(agents: List<AgentSettings>): AgentSettings? {
     val enabledAgents = agents.filter { it.enabled }
-    return enabledAgents.firstOrNull { it.permissions.templates }
-        ?: enabledAgents.firstOrNull()
+    return enabledAgents.firstOrNull { it.id == "agent-template" }
+        ?: enabledAgents.firstOrNull { it.permissions.templates }
+}
+
+private fun selectRecordAgent(agents: List<AgentSettings>): AgentSettings? {
+    val enabledAgents = agents.filter { it.enabled }
+    return enabledAgents.firstOrNull { it.id == "agent-record" }
+        ?: enabledAgents.firstOrNull { it.name.contains("记录") && it.permissions.dailyRecords }
+        ?: enabledAgents.firstOrNull { it.name.contains("总结") && it.permissions.dailyRecords }
+        ?: enabledAgents.firstOrNull { it.permissions.dailyRecords }
 }
 
 private fun String.withNickname(nickname: String): String {
