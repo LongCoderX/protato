@@ -36,6 +36,28 @@ Debug APK 会生成在：
 app/build/outputs/apk/debug/app-debug.apk
 ```
 
+## 发布方式
+
+CI 会在推送语义化版本标签时发布 signed release APK，例如：
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+发布前需要在 GitHub 仓库的 Actions secrets 中配置：
+
+- `PROTATO_KEYSTORE_BASE64`：release keystore 文件的 Base64 内容。
+- `PROTATO_KEYSTORE_PASSWORD`：keystore 密码。
+- `PROTATO_KEY_ALIAS`：签名 key alias。
+- `PROTATO_KEY_PASSWORD`：签名 key 密码。
+
+本地生成 `PROTATO_KEYSTORE_BASE64` 可运行：
+
+```bash
+base64 -i protato-release.jks
+```
+
 ## 后续建议
 
 - 增加前台服务和系统通知，让计时在后台更可靠。

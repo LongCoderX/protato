@@ -3,14 +3,14 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "v*.*.*"
 
 permissions:
   contents: write
 
 jobs:
   release:
-    name: Build and publish APK
+    name: Build and publish release APK
     runs-on: ubuntu-latest
 
     steps:
@@ -30,14 +30,26 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
-      - name: Build debug APK
-        run: ./gradlew --no-daemon :app:assembleDebug
+      - name: Decode release keystore
+        env:
+          PROTATO_KEYSTORE_BASE64: ${{ secrets.PROTATO_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$PROTATO_KEYSTORE_BASE64"
+          echo "$PROTATO_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/protato-release.jks"
+
+      - name: Build release APK
+        env:
+          PROTATO_KEYSTORE_PATH: ${{ runner.temp }}/protato-release.jks
+          PROTATO_KEYSTORE_PASSWORD: ${{ secrets.PROTATO_KEYSTORE_PASSWORD }}
+          PROTATO_KEY_ALIAS: ${{ secrets.PROTATO_KEY_ALIAS }}
+          PROTATO_KEY_PASSWORD: ${{ secrets.PROTATO_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon :app:assembleRelease
 
       - name: Prepare release asset
-        run: cp app/build/outputs/apk/debug/app-debug.apk "protato-${GITHUB_REF_NAME}-debug.apk"
+        run: cp app/build/outputs/apk/release/app-release.apk "protato-${GITHUB_REF_NAME}-release.apk"
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
         with:
-          files: protato-${{ github.ref_name }}-debug.apk
+          files: protato-${{ github.ref_name }}-release.apk
           generate_release_notes: true

@@ -8,12 +8,35 @@ android {
     namespace = "com.protato.app"
     compileSdk = 35
 
+    val releaseKeystorePath = System.getenv("PROTATO_KEYSTORE_PATH")
+    val releaseKeystorePassword = System.getenv("PROTATO_KEYSTORE_PASSWORD")
+    val releaseKeyAlias = System.getenv("PROTATO_KEY_ALIAS")
+    val releaseKeyPassword = System.getenv("PROTATO_KEY_PASSWORD")
+
     defaultConfig {
         applicationId = "com.protato.app"
         minSdk = 26
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+    }
+
+    signingConfigs {
+        create("release") {
+            if (!releaseKeystorePath.isNullOrBlank()) {
+                storeFile = file(releaseKeystorePath)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     buildFeatures {
