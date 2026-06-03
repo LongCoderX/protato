@@ -640,13 +640,27 @@ private fun AgentScreen(
                     )
                     onStateChange(userState)
                     pendingTodos = emptyList()
-                    val todoDrafts = if (text.looksLikeTodoPlanningRequest()) {
-                        parseTodoSuggestions(text)
-                    } else {
-                        emptyList()
-                    }
                     scope.launch {
                         loading = true
+                        val todoDrafts = if (text.looksLikeTodoPlanningRequest()) {
+                            runCatching {
+                                if (agent != null && provider != null && provider.isConfiguredForChat()) {
+                                    generateAgentTodoDrafts(
+                                        rawInput = text,
+                                        state = userState,
+                                        agent = agent,
+                                        provider = provider,
+                                        nickname = nickname
+                                    )
+                                } else {
+                                    localPlanTodoDrafts(text)
+                                }
+                            }.getOrElse {
+                                localPlanTodoDrafts(text)
+                            }
+                        } else {
+                            emptyList()
+                        }
                         val reply = runCatching {
                             if (agent != null && provider != null && provider.isConfiguredForChat()) {
                                 requestUnifiedAgentChat(
@@ -4501,6 +4515,28 @@ private data class TodoDraft(
     }
 }
 
+private data class TodoPlanDraft(
+    val action: String,
+    val objectText: String,
+    val dueDate: String? = null,
+    val tags: List<String> = emptyList(),
+    val plannedPomodoros: Int = 1
+) {
+    fun toTodoDraft(): TodoDraft {
+        val title = if (action.isNotBlank() && objectText.isNotBlank()) {
+            "$action$objectText".normalizeTodoPhrase().take(40)
+        } else {
+            (objectText.ifBlank { action }).normalizeTodoTitle()
+        }
+        return TodoDraft(
+            title = title,
+            dueDate = dueDate,
+            tags = tags.ifEmpty { inferTodoTags(title) },
+            plannedPomodoros = plannedPomodoros.coerceIn(1, 24)
+        )
+    }
+}
+
 private fun AppState.withNextRevisionFrom(previous: AppState): AppState {
     val normalizedNext = copy(projectRevision = previous.projectRevision)
     return if (normalizedNext == previous) {
@@ -4803,6 +4839,42 @@ private suspend fun generateTodoSuggestions(
     return parseTodoSuggestions(response).ifEmpty { parseTodoSuggestions(rawInput) }
 }
 
+private suspend fun generateAgentTodoDrafts(
+    rawInput: String,
+    state: AppState,
+    agent: AgentSettings,
+    provider: LlmProviderSettings,
+    nickname: String
+): List<TodoDraft> {
+    val today = dayKey(System.currentTimeMillis())
+    val systemPrompt = buildString {
+        append(agent.prompt.withNickname(nickname))
+        appendAgentStylePrompt()
+        append("\n你是 Protato 的任务规划器。你要用 ReAct 风格在内部完成：Observation=理解用户真实意图；Decision=判断任务边界，合并同一件事的碎片；Action=输出可执行待办草案。")
+        append(" 不要暴露 Observation 或 Decision，不要解释。")
+        append(" 今天日期是 $today。")
+        append(" 只返回结构化行，每行一个任务：TASK | 动词 | 对象/结果 | yyyy-MM-dd 或 空 | 标签1,标签2 | 番茄数。")
+        append(" 原则：一件事只输出一行；不要照抄口语原文；标题必须读起来通顺，像“整理项目周报材料”“给客户回复报价邮件”。")
+        append(" 如果用户只是描述一个目标，先收束成一个最小可执行动作。")
+        append(" 如果输入里有因果、补充说明、背景，不要拆成独立任务。")
+        append(" 标签 1-3 个，番茄数 1-6。无法形成待办就返回 NONE。")
+        append("\n\n当前上下文：\n")
+        append(state.toUnifiedAgentContext(nickname))
+    }
+    val response = requestLlmChat(
+        provider = provider,
+        messages = listOf(
+            LlmChatMessage("system", systemPrompt),
+            LlmChatMessage("user", rawInput)
+        )
+    )
+    return parseTodoPlanDrafts(response)
+        .map { it.toTodoDraft() }
+        .ifEmpty { localPlanTodoDrafts(rawInput) }
+        .distinctBy { it.title.lowercase(Locale.getDefault()) }
+        .take(8)
+}
+
 private suspend fun generateTemplateSuggestion(
     rawInput: String,
     agent: AgentSettings,
@@ -4900,6 +4972,71 @@ private fun localTemplateSuggestion(rawInput: String): RecordTemplate {
     )
 }
 
+private fun parseTodoPlanDrafts(text: String): List<TodoPlanDraft> {
+    if (text.trim().equals("NONE", ignoreCase = true)) return emptyList()
+    return text.lines()
+        .map { it.trim().trim('-', '*', '•', ' ') }
+        .filter { it.startsWith("TASK", ignoreCase = true) }
+        .mapNotNull { line ->
+            val parts = line.split("|").map { it.trim() }
+            if (parts.size < 6) return@mapNotNull null
+            val action = parts[1].normalizeTodoPhrase()
+            val objectText = parts[2].normalizeTodoPhrase()
+            val title = listOf(action, objectText).joinToString(" ").normalizeTodoTitle()
+            if (title.isBlank()) return@mapNotNull null
+            TodoPlanDraft(
+                action = action.ifBlank { inferTodoAction(objectText) },
+                objectText = objectText,
+                dueDate = normalizedTodoDate(parts[3]) ?: inferTodoDate(line),
+                tags = parseTodoTags(parts[4]).ifEmpty { inferTodoTags(title) },
+                plannedPomodoros = parsePomodoroCount(parts[5]) ?: inferPlannedPomodoros(title)
+            )
+        }
+        .filter { it.toTodoDraft().title.isNotBlank() }
+        .distinctBy { it.toTodoDraft().title.lowercase(Locale.getDefault()) }
+}
+
+private fun localPlanTodoDrafts(rawInput: String): List<TodoDraft> {
+    val candidates = rawInput
+        .split(Regex("[\\n；;]+"))
+        .flatMap { splitLooseTodoSentence(it) }
+        .map { it.normalizeTodoTitle() }
+        .filter { it.isNotBlank() }
+        .map { title ->
+            TodoDraft(
+                title = title,
+                dueDate = inferTodoDate(rawInput),
+                tags = inferTodoTags(title),
+                plannedPomodoros = parsePomodoroCount(rawInput) ?: inferPlannedPomodoros(title)
+            )
+        }
+        .distinctBy { it.title.lowercase(Locale.getDefault()) }
+    return candidates.ifEmpty {
+        val title = rawInput.normalizeTodoTitle()
+        if (title.isBlank()) emptyList() else listOf(
+            TodoDraft(
+                title = title,
+                dueDate = inferTodoDate(rawInput),
+                tags = inferTodoTags(title),
+                plannedPomodoros = parsePomodoroCount(rawInput) ?: inferPlannedPomodoros(title)
+            )
+        )
+    }.take(8)
+}
+
+private fun splitLooseTodoSentence(value: String): List<String> {
+    val normalized = value
+        .replace(Regex("[，,。]+"), " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+    if (normalized.isBlank()) return emptyList()
+    val strongSplit = Regex("(?:^|\\s)(?:另外|还有|以及|再加上)(?:\\s|$)")
+    val parts = normalized.split(strongSplit)
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
+    return parts.ifEmpty { listOf(normalized) }
+}
+
 private fun parseTodoSuggestions(text: String): List<TodoDraft> {
     return text
         .split("\n", "；", ";", "。")
@@ -4945,12 +5082,63 @@ private fun parseTodoDraftLine(line: String): TodoDraft {
 }
 
 private fun String.cleanTodoTitle(): String {
-    return replace(Regex("\\|.*$"), "")
+    return normalizeTodoTitle()
+}
+
+private fun String.normalizeTodoTitle(): String {
+    val cleaned = replace(Regex("\\|.*$"), "")
         .replace(Regex("\\d{4}-\\d{2}-\\d{2}"), "")
-        .replace(Regex("今天|明天|后天|周末"), "")
+        .replace(Regex("(?:今天|明天|后天|周末|今晚|上午|下午|晚上)(?:要|想|需要|准备)?"), "")
         .replace(Regex("[#＃][\\p{L}\\p{N}_-]+"), "")
+        .replace(Regex("^(帮我|我想|我要|需要|准备|计划|安排|待办|任务|todo)[:：、\\s]*", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("\\s*(因为|所以|但是|然后|顺便)\\s*"), " ")
+        .replace(Regex("\\s+"), " ")
+        .replace(Regex("^[,，。；;、\\s]+|[,，。；;、\\s]+$"), "")
         .trim()
-        .take(40)
+    return cleaned.toReadableTodoTitle().take(40)
+}
+
+private fun String.normalizeTodoPhrase(): String {
+    return replace(Regex("^(帮我|我想|我要|需要|准备|计划|安排)[:：、\\s]*"), "")
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .take(24)
+}
+
+private fun String.toReadableTodoTitle(): String {
+    if (isBlank()) return ""
+    val trimmed = trim()
+    val hasKnownVerb = listOf(
+        "整理",
+        "完成",
+        "回复",
+        "检查",
+        "阅读",
+        "学习",
+        "复盘",
+        "写",
+        "改",
+        "做",
+        "准备",
+        "沟通",
+        "确认",
+        "提交",
+        "设计",
+        "开发"
+    ).any { trimmed.startsWith(it) }
+    return if (hasKnownVerb) trimmed else "${inferTodoAction(trimmed)}$trimmed"
+}
+
+private fun inferTodoAction(text: String): String {
+    val lowered = text.lowercase(Locale.getDefault())
+    return when {
+        listOf("邮件", "消息", "客户", "沟通").any { it in lowered } -> "回复"
+        listOf("文档", "资料", "材料", "报告", "周报").any { it in lowered } -> "整理"
+        listOf("代码", "功能", "bug", "接口", "页面").any { it in lowered } -> "开发"
+        listOf("课程", "书", "文章", "论文").any { it in lowered } -> "阅读"
+        listOf("复盘", "总结").any { it in lowered } -> "完成"
+        else -> "完成"
+    }
 }
 
 private fun extractTodoHashTags(value: String): List<String> {
