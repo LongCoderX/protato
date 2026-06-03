@@ -41,10 +41,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.automirrored.outlined.List
+import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.Delete
@@ -173,6 +176,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class MainTab(val label: String, val icon: ImageVector) {
+    Agent("Agent", Icons.AutoMirrored.Outlined.Chat),
     Focus("专注", Icons.Outlined.Timer),
     Todo("待办", Icons.AutoMirrored.Outlined.List),
     Templates("模板", Icons.AutoMirrored.Outlined.ViewList),
@@ -241,7 +245,7 @@ fun ProtatoApp() {
     }
 
     ProtatoTheme {
-        var currentTab by rememberSaveable { mutableStateOf(MainTab.Focus) }
+        var currentTab by rememberSaveable { mutableStateOf(MainTab.Agent) }
         Scaffold(
             bottomBar = {
                 NavigationBar {
@@ -263,6 +267,11 @@ fun ProtatoApp() {
                 color = MaterialTheme.colorScheme.background
             ) {
                 when (currentTab) {
+                    MainTab.Agent -> AgentScreen(
+                        appState = appState,
+                        onStateChange = { setAppState(it) }
+                    )
+
                     MainTab.Focus -> FocusScreen(
                         appState = appState,
                         selectedTodoId = selectedTodoId,
@@ -479,6 +488,297 @@ private fun ProtatoTheme(content: @Composable () -> Unit) {
         typography = MaterialTheme.typography,
         content = content
     )
+}
+
+@Composable
+private fun AgentScreen(
+    appState: AppState,
+    onStateChange: (AppState) -> Unit
+) {
+    val scope = rememberCoroutineScope()
+    val nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME }
+    val todayKey = dayKey(System.currentTimeMillis())
+    val todayTodos = remember(appState.todos, todayKey) {
+        appState.todos.filter { it.dueDate == todayKey && !it.completed }
+    }
+    val todayRecords = remember(appState.records, todayKey) {
+        appState.records.filter { dayKey(it.endedAt) == todayKey }
+    }
+    val agent = selectUnifiedAgent(appState.agents)
+    val provider = agent?.providerId?.let { providerId ->
+        appState.llmProviders.firstOrNull { it.id == providerId }
+    } ?: appState.llmProviders.firstOrNull { it.isConfiguredForChat() }
+    var input by rememberSaveable { mutableStateOf("") }
+    var loading by rememberSaveable { mutableStateOf(false) }
+    var syncing by rememberSaveable { mutableStateOf(false) }
+    var errorText by rememberSaveable { mutableStateOf<String?>(null) }
+    var syncStatus by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingTodos by remember { mutableStateOf<List<TodoDraft>>(emptyList()) }
+    var viewingSummary by remember { mutableStateOf<DailySummary?>(null) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Header(title = "日程 Agent", subtitle = "把行程、待办、专注和总结放进同一个对话")
+        AgentDayCard(
+            todayKey = todayKey,
+            todos = todayTodos,
+            records = todayRecords,
+            syncing = syncing,
+            syncEnabled = appState.webDevSync.enabled && appState.webDevSync.endpoint.isNotBlank(),
+            onSummary = {
+                scope.launch {
+                    loading = true
+                    errorText = null
+                    val summary = runCatching {
+                        generateDailySummary(
+                            dayKey = todayKey,
+                            records = todayRecords,
+                            templates = appState.templates,
+                            providers = appState.llmProviders,
+                            agents = appState.agents,
+                            nickname = nickname
+                        )
+                    }.getOrElse { error ->
+                        errorText = error.message ?: "生成总结失败"
+                        localDailySummary(todayKey, todayRecords, nickname)
+                    }
+                    val nextState = appState.copy(
+                        dailySummaries = listOf(summary) + appState.dailySummaries.filterNot {
+                            it.dayKey == summary.dayKey
+                        },
+                        agentMessages = appState.agentMessages.appendAgentMessage(
+                            role = "assistant",
+                            content = "我已经生成了 ${formatDayLabel(todayKey)} 的总结，可以在记录页查看。"
+                        )
+                    )
+                    onStateChange(nextState)
+                    viewingSummary = summary
+                    loading = false
+                }
+            },
+            onSync = {
+                scope.launch {
+                    syncing = true
+                    syncStatus = null
+                    errorText = null
+                    syncStatus = runCatching {
+                        syncWebDevState(appState)
+                        "已同步到 WebDev 接口"
+                    }.getOrElse { error ->
+                        error.message ?: "同步失败"
+                    }
+                    syncing = false
+                }
+            }
+        )
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            items(appState.agentMessages, key = { it.id }) { message ->
+                ChatBubble(LlmChatMessage(message.role, message.content))
+            }
+            if (loading) {
+                item {
+                    Text("Agent 正在整理...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+
+        if (pendingTodos.isNotEmpty()) {
+            AgentTodoDraftCard(
+                drafts = pendingTodos,
+                onAdd = {
+                    val newTodos = pendingTodos.map { it.toTodoItem() }
+                    onStateChange(
+                        appState.copy(
+                            todos = newTodos + appState.todos,
+                            agentMessages = appState.agentMessages.appendAgentMessage(
+                                role = "assistant",
+                                content = "已添加 ${newTodos.size} 个待办。"
+                            )
+                        )
+                    )
+                    pendingTodos = emptyList()
+                },
+                onDismiss = { pendingTodos = emptyList() }
+            )
+        }
+
+        errorText?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        syncStatus?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.Bottom
+        ) {
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it.take(1200) },
+                modifier = Modifier.weight(1f),
+                label = { Text("和日程 Agent 说话") },
+                minLines = 1,
+                maxLines = 4
+            )
+            FilledIconButton(
+                enabled = input.isNotBlank() && !loading,
+                onClick = {
+                    val text = input.trim()
+                    input = ""
+                    errorText = null
+                    syncStatus = null
+                    val userState = appState.copy(
+                        agentMessages = appState.agentMessages.appendAgentMessage("user", text)
+                    )
+                    onStateChange(userState)
+                    pendingTodos = emptyList()
+                    val todoDrafts = if (text.looksLikeTodoPlanningRequest()) {
+                        parseTodoSuggestions(text)
+                    } else {
+                        emptyList()
+                    }
+                    scope.launch {
+                        loading = true
+                        val reply = runCatching {
+                            if (agent != null && provider != null && provider.isConfiguredForChat()) {
+                                requestUnifiedAgentChat(
+                                    state = userState,
+                                    agent = agent,
+                                    provider = provider,
+                                    nickname = nickname
+                                )
+                            } else {
+                                localUnifiedAgentReply(text, userState, nickname)
+                            }
+                        }.getOrElse { error ->
+                            errorText = error.message ?: "发送失败"
+                            localUnifiedAgentReply(text, userState, nickname)
+                        }
+                        onStateChange(
+                            userState.copy(
+                                agentMessages = userState.agentMessages.appendAgentMessage(
+                                    "assistant",
+                                    reply
+                                )
+                            )
+                        )
+                        pendingTodos = todoDrafts
+                        loading = false
+                    }
+                }
+            ) {
+                Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "发送")
+            }
+        }
+    }
+
+    viewingSummary?.let { summary ->
+        DailySummaryDialog(summary = summary, onDismiss = { viewingSummary = null })
+    }
+}
+
+@Composable
+private fun AgentDayCard(
+    todayKey: String,
+    todos: List<TodoItem>,
+    records: List<PomodoroRecord>,
+    syncing: Boolean,
+    syncEnabled: Boolean,
+    onSummary: () -> Unit,
+    onSync: () -> Unit
+) {
+    val totalMinutes = records.sumOf { it.focusMinutes }
+    ElevatedCard(
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(formatDayLabel(todayKey), fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${todos.size} 个待办 · ${records.size} 个番茄 · $totalMinutes 分钟",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(
+                    enabled = syncEnabled && !syncing,
+                    onClick = onSync
+                ) {
+                    Icon(Icons.Outlined.CloudUpload, contentDescription = "同步")
+                }
+            }
+            if (todos.isNotEmpty()) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(todos.take(6), key = { it.id }) { todo ->
+                        AssistChip(
+                            onClick = { },
+                            label = {
+                                Text(
+                                    todo.title,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        )
+                    }
+                }
+            }
+            OutlinedButton(
+                enabled = records.isNotEmpty(),
+                onClick = onSummary,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("生成今日总结")
+            }
+        }
+    }
+}
+
+@Composable
+private fun AgentTodoDraftCard(
+    drafts: List<TodoDraft>,
+    onAdd: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ElevatedCard(
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("待办草案", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                TextButton(onClick = onDismiss) {
+                    Text("忽略")
+                }
+                TextButton(onClick = onAdd) {
+                    Text("确认添加")
+                }
+            }
+            drafts.take(5).forEach { draft ->
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(draft.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        TodoDraftMetadataRow(draft)
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -2959,6 +3259,14 @@ private fun SettingsScreen(
             )
         }
         item {
+            WebDevSyncSettingsCard(
+                settings = appState.webDevSync,
+                onChange = { settings ->
+                    onStateChange(appState.copy(webDevSync = settings))
+                }
+            )
+        }
+        item {
             LlmProviderListCard(
                 providers = appState.llmProviders,
                 onUpsert = { provider ->
@@ -3000,6 +3308,68 @@ private fun SettingsScreen(
                     onStateChange(appState.copy(agents = appState.agents.filterNot { it.id == agent.id }))
                 }
             )
+        }
+    }
+}
+
+@Composable
+private fun WebDevSyncSettingsCard(
+    settings: WebDevSyncSettings,
+    onChange: (WebDevSyncSettings) -> Unit
+) {
+    val tokenMask = "***"
+    val tokenDisplay = if (settings.authToken.isBlank()) "" else tokenMask
+    ElevatedCard(
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("WebDev 同步", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        settings.cloudProvider.cloudProviderLabel(),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = settings.enabled,
+                    onCheckedChange = { onChange(settings.copy(enabled = it)) }
+                )
+            }
+            OutlinedTextField(
+                value = settings.endpoint,
+                onValueChange = { onChange(settings.copy(endpoint = it.take(240))) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("同步接口地址") },
+                singleLine = true
+            )
+            OutlinedTextField(
+                value = tokenDisplay,
+                onValueChange = { value ->
+                    val nextToken = when {
+                        value.isBlank() -> ""
+                        value == tokenMask -> settings.authToken
+                        value.startsWith(tokenMask) -> value.removePrefix(tokenMask).take(240)
+                        else -> value.take(240)
+                    }
+                    onChange(settings.copy(authToken = nextToken))
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("同步 Token") },
+                singleLine = true
+            )
+            SingleChoiceSegmentedButtonRow {
+                listOf("webdev", "aliyun", "baidu").forEachIndexed { index, provider ->
+                    SegmentedButton(
+                        selected = settings.cloudProvider == provider,
+                        onClick = { onChange(settings.copy(cloudProvider = provider)) },
+                        shape = SegmentedButtonDefaults.itemShape(index, 3),
+                        label = { Text(provider.cloudProviderLabel()) }
+                    )
+                }
+            }
         }
     }
 }
@@ -4172,35 +4542,31 @@ private fun LlmProviderSettings.isConfiguredForChat(): Boolean {
     return endpoint.isNotBlank() && modelName.isNotBlank() && apiKey.isNotBlank()
 }
 
-private fun selectEncouragerAgent(agents: List<AgentSettings>): AgentSettings? {
+private fun selectUnifiedAgent(agents: List<AgentSettings>): AgentSettings? {
     val enabledAgents = agents.filter { it.enabled }
-    return enabledAgents.firstOrNull { it.id == "agent-encourager" }
-        ?: enabledAgents.firstOrNull { it.name.contains("鼓励") }
-        ?: enabledAgents.firstOrNull { it.permissions.dailyRecords }
+    return enabledAgents.firstOrNull { it.id == "agent-unified" }
+        ?: enabledAgents.firstOrNull()
+        ?: agents.firstOrNull()
+}
+
+private fun selectEncouragerAgent(agents: List<AgentSettings>): AgentSettings? {
+    return selectUnifiedAgent(agents)
 }
 
 private fun selectDailySummaryAgent(agents: List<AgentSettings>): AgentSettings? {
-    return selectRecordAgent(agents)
+    return selectUnifiedAgent(agents)
 }
 
 private fun selectTodoAgent(agents: List<AgentSettings>): AgentSettings? {
-    val enabledAgents = agents.filter { it.enabled }
-    return enabledAgents.firstOrNull { it.id == "agent-todo" }
-        ?: enabledAgents.firstOrNull { it.permissions.todos }
+    return selectUnifiedAgent(agents)
 }
 
 private fun selectTemplateAgent(agents: List<AgentSettings>): AgentSettings? {
-    val enabledAgents = agents.filter { it.enabled }
-    return enabledAgents.firstOrNull { it.id == "agent-template" }
-        ?: enabledAgents.firstOrNull { it.permissions.templates }
+    return selectUnifiedAgent(agents)
 }
 
 private fun selectRecordAgent(agents: List<AgentSettings>): AgentSettings? {
-    val enabledAgents = agents.filter { it.enabled }
-    return enabledAgents.firstOrNull { it.id == "agent-record" }
-        ?: enabledAgents.firstOrNull { it.name.contains("记录") && it.permissions.dailyRecords }
-        ?: enabledAgents.firstOrNull { it.name.contains("总结") && it.permissions.dailyRecords }
-        ?: enabledAgents.firstOrNull { it.permissions.dailyRecords }
+    return selectUnifiedAgent(agents)
 }
 
 private fun String.withNickname(nickname: String): String {
@@ -4212,9 +4578,117 @@ private fun StringBuilder.appendAgentStylePrompt() {
     append(AGENT_STYLE_PROMPT)
 }
 
+private fun List<AgentConversationMessage>.appendAgentMessage(
+    role: String,
+    content: String
+): List<AgentConversationMessage> {
+    return (this + AgentConversationMessage(
+        id = newId(),
+        role = role,
+        content = content.trim()
+    )).takeLast(80)
+}
+
+private fun String.looksLikeTodoPlanningRequest(): Boolean {
+    val lowered = lowercase(Locale.getDefault())
+    return listOf(
+        "待办",
+        "todo",
+        "任务",
+        "计划",
+        "行程",
+        "安排",
+        "今天",
+        "明天",
+        "要做",
+        "帮我拆"
+    ).any { it in lowered }
+}
+
+private fun String.cloudProviderLabel(): String = when (this) {
+    "aliyun" -> "阿里云"
+    "baidu" -> "百度云"
+    else -> "WebDev"
+}
+
 private fun localEncouragement(record: PendingRecord, nickname: String): String {
     val name = nickname.ifBlank { DEFAULT_NICKNAME }
     return "$name，你刚刚把 ${record.focusMinutes} 分钟真正交给了「${record.todoTitle}」。这不是一句轻飘飘的“不错”，而是一次清清楚楚的推进：你坐下来、守住了这一轮、让事情往前走了一步。先把这份完成感收下，然后用复盘写下一个最小下一步。你已经启动了惯性，接下来只需要顺着它再走一点。"
+}
+
+private suspend fun requestUnifiedAgentChat(
+    state: AppState,
+    agent: AgentSettings,
+    provider: LlmProviderSettings,
+    nickname: String
+): String {
+    val systemPrompt = buildString {
+        append(agent.prompt.withNickname(nickname))
+        appendAgentStylePrompt()
+        append("\n你现在是 Protato 唯一的统一 Agent。你需要通过连续对话帮助用户确定一天行程、拆解待办、选择下一轮番茄对象，并在结束时总结。")
+        append(" 你可以读取待办、今日番茄记录、复盘模板和长期记忆。")
+        append(" 如果要新增待办，只输出草案建议，不要声称已经添加；用户必须点击确认后应用才会写入 TodoList。")
+        append(" 回答要短、具体、可执行。")
+        append("\n\n当前上下文：\n")
+        append(state.toUnifiedAgentContext(nickname))
+    }
+    return requestLlmChat(
+        provider = provider,
+        messages = listOf(LlmChatMessage("system", systemPrompt)) +
+            state.agentMessages.takeLast(16).map { LlmChatMessage(it.role, it.content) }
+    )
+}
+
+private fun localUnifiedAgentReply(
+    input: String,
+    state: AppState,
+    nickname: String
+): String {
+    val today = dayKey(System.currentTimeMillis())
+    val todayTodos = state.todos.filter { it.dueDate == today && !it.completed }
+    val todayRecords = state.records.filter { dayKey(it.endedAt) == today }
+    val name = nickname.ifBlank { DEFAULT_NICKNAME }
+    return when {
+        "总结" in input -> {
+            val minutes = todayRecords.sumOf { it.focusMinutes }
+            "$name，今天目前有 ${todayRecords.size} 个番茄、$minutes 分钟专注记录。可以点上面的“生成今日总结”，我会把记录沉淀成一段正式复盘。"
+        }
+        input.looksLikeTodoPlanningRequest() -> {
+            val count = parseTodoSuggestions(input).size
+            if (count > 0) {
+                "我先把你的想法整理成 $count 个待办草案了。看一下下方卡片，确认后我再写入 TodoList。"
+            } else {
+                "可以。先把今天最想推进的事情用一两句话丢给我，我会拆成可执行待办，再由你确认添加。"
+            }
+        }
+        todayTodos.isNotEmpty() -> {
+            "我在。今天还有 ${todayTodos.size} 个未完成待办。建议先选一个最小、最清楚的任务开一轮番茄；结束后我会继续帮你复盘和收束。"
+        }
+        else -> {
+            "我在。你可以先告诉我今天想完成什么，我会帮你排成待办草案，再陪你用番茄钟一步步推进。"
+        }
+    }
+}
+
+private fun AppState.toUnifiedAgentContext(nickname: String): String {
+    val today = dayKey(System.currentTimeMillis())
+    val todayTodos = todos.filter { it.dueDate == today }
+    val todayRecords = records.filter { dayKey(it.endedAt) == today }
+    val todoText = todayTodos.take(12).joinToString("\n") { todo ->
+        "- [${if (todo.completed) "x" else " "}] ${todo.title}（${todo.plannedPomodoros} 个番茄，标签：${todo.tags.joinToString("、").ifBlank { "无" }}）"
+    }.ifBlank { "无" }
+    val recordText = todayRecords.takeLast(8).joinToString("\n") { record ->
+        "- ${formatClockTime(record.endedAt)} ${record.todoTitle}，${record.focusMinutes} 分钟"
+    }.ifBlank { "无" }
+    val templateText = templates.take(6).joinToString("、") { it.name }.ifBlank { "无" }
+    return buildString {
+        append("用户昵称：${nickname.ifBlank { DEFAULT_NICKNAME }}\n")
+        append("今天日期：$today\n")
+        append("今日待办：\n$todoText\n")
+        append("今日番茄记录：\n$recordText\n")
+        append("可用复盘模板：$templateText\n")
+        append("长期记忆：${agentMemory.ifBlank { "暂无" }}")
+    }
 }
 
 private suspend fun generateDailySummary(
@@ -4846,6 +5320,93 @@ private suspend fun fetchLlmModels(endpoint: String, apiKey: String): List<Strin
             connection.disconnect()
         }
     }
+}
+
+private suspend fun syncWebDevState(state: AppState) {
+    val settings = state.webDevSync
+    if (!settings.enabled || settings.endpoint.isBlank()) {
+        throw IllegalStateException("请先在设置里启用 WebDev 同步并填写接口地址")
+    }
+    return withContext(Dispatchers.IO) {
+        val connection = (URL(settings.endpoint.trim()).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/json")
+            if (settings.authToken.isNotBlank()) {
+                setRequestProperty("Authorization", "Bearer ${settings.authToken}")
+            }
+        }
+        try {
+            connection.outputStream.use { stream ->
+                stream.write(state.toWebDevSyncJson().toString().toByteArray(Charsets.UTF_8))
+            }
+            val responseCode = connection.responseCode
+            if (responseCode !in 200..299) {
+                throw IllegalStateException("同步失败：HTTP $responseCode")
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+}
+
+private fun AppState.toWebDevSyncJson(): JSONObject {
+    return JSONObject()
+        .put("schema", "protato.webdev.sync.v1")
+        .put("projectRevision", projectRevision)
+        .put("nickname", nickname)
+        .put("cloudProvider", webDevSync.cloudProvider)
+        .put("syncedAt", System.currentTimeMillis())
+        .put("agentMemory", agentMemory)
+        .put("agentMessages", agentMessages.toJsonArrayForSync { message ->
+            JSONObject()
+                .put("id", message.id)
+                .put("role", message.role)
+                .put("content", message.content)
+                .put("createdAt", message.createdAt)
+        })
+        .put("todos", todos.toJsonArrayForSync { todo ->
+            JSONObject()
+                .put("id", todo.id)
+                .put("title", todo.title)
+                .put("completed", todo.completed)
+                .put("createdAt", todo.createdAt)
+                .put("tags", todo.tags.toJsonArrayForSync { it })
+                .put("dueDate", todo.dueDate ?: "")
+                .put("plannedPomodoros", todo.plannedPomodoros)
+        })
+        .put("records", records.toJsonArrayForSync { record ->
+            JSONObject()
+                .put("id", record.id)
+                .put("todoId", record.todoId ?: "")
+                .put("todoTitle", record.todoTitle)
+                .put("templateName", record.templateName)
+                .put("startedAt", record.startedAt)
+                .put("endedAt", record.endedAt)
+                .put("focusMinutes", record.focusMinutes)
+                .put("answers", record.answers.toJsonArrayForSync { answer ->
+                    JSONObject()
+                        .put("fieldId", answer.fieldId)
+                        .put("value", answer.value)
+                })
+        })
+        .put("dailySummaries", dailySummaries.toJsonArrayForSync { summary ->
+            JSONObject()
+                .put("dayKey", summary.dayKey)
+                .put("generatedAt", summary.generatedAt)
+                .put("title", summary.title)
+                .put("content", summary.content)
+                .put("pomodoroCount", summary.pomodoroCount)
+                .put("focusMinutes", summary.focusMinutes)
+        })
+}
+
+private inline fun <T> List<T>.toJsonArrayForSync(transform: (T) -> Any): JSONArray {
+    val array = JSONArray()
+    forEach { array.put(transform(it)) }
+    return array
 }
 
 private suspend fun requestLlmChat(

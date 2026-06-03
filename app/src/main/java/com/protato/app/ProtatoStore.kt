@@ -23,7 +23,7 @@ class ProtatoStore(context: Context) {
             val agents = root.optJSONArray("agents")?.toAgents().orEmpty()
             val loadedAgents = agents.ifEmpty {
                 defaultAgents().withLegacyEncouragerAgent(legacyEncouragerAgent)
-            }.withDefaultAgents()
+            }.toUnifiedAgents()
             AppState(
                 todos = root.optJSONArray("todos")?.toTodos().orEmpty(),
                 templates = templates.ifEmpty { listOf(defaultTemplate()) },
@@ -42,7 +42,13 @@ class ProtatoStore(context: Context) {
                 llmProviders = llmProviders.ifEmpty {
                     defaultLlmProviders().withLegacyLlmImport(legacyLlmImport)
                 },
-                agents = loadedAgents
+                agents = loadedAgents,
+                agentMessages = root.optJSONArray("agentMessages")?.toAgentConversationMessages()
+                    ?.ifEmpty { defaultAgentConversation() }
+                    ?: defaultAgentConversation(),
+                agentMemory = root.optString("agentMemory"),
+                webDevSync = root.optJSONObject("webDevSync")?.toWebDevSyncSettings()
+                    ?: WebDevSyncSettings()
             )
         }.getOrElse { AppState() }
     }
@@ -62,6 +68,9 @@ class ProtatoStore(context: Context) {
             .put("nickname", state.nickname)
             .put("llmProviders", state.llmProviders.toJsonArray { it.toJson() })
             .put("agents", state.agents.toJsonArray { it.toJson() })
+            .put("agentMessages", state.agentMessages.toJsonArray { it.toJson() })
+            .put("agentMemory", state.agentMemory)
+            .put("webDevSync", state.webDevSync.toJson())
         file.writeText(root.toString(2))
     }
 }
@@ -122,6 +131,15 @@ private fun JSONArray.toDailySummaries(): List<DailySummary> = mapObjects { item
         focusMinutes = item.optInt("focusMinutes")
     )
 }.filter { it.dayKey.isNotBlank() && it.content.isNotBlank() }
+
+private fun JSONArray.toAgentConversationMessages(): List<AgentConversationMessage> = mapObjects { item ->
+    AgentConversationMessage(
+        id = item.optString("id"),
+        role = item.optString("role"),
+        content = item.optString("content"),
+        createdAt = item.optLong("createdAt", System.currentTimeMillis())
+    )
+}.filter { it.id.isNotBlank() && it.role in setOf("user", "assistant") && it.content.isNotBlank() }
 
 private fun JSONArray.toAnswers(): List<FieldAnswer> = mapObjects { item ->
     FieldAnswer(
@@ -219,6 +237,15 @@ private fun JSONObject.toAgentDataPermissions(): AgentDataPermissions {
     )
 }
 
+private fun JSONObject.toWebDevSyncSettings(): WebDevSyncSettings {
+    return WebDevSyncSettings(
+        enabled = optBoolean("enabled"),
+        endpoint = optString("endpoint"),
+        authToken = optString("authToken"),
+        cloudProvider = optString("cloudProvider", "webdev").ifBlank { "webdev" }
+    )
+}
+
 private fun TodoItem.toJson(): JSONObject = JSONObject()
     .put("id", id)
     .put("title", title)
@@ -258,6 +285,12 @@ private fun DailySummary.toJson(): JSONObject = JSONObject()
     .put("content", content)
     .put("pomodoroCount", pomodoroCount)
     .put("focusMinutes", focusMinutes)
+
+private fun AgentConversationMessage.toJson(): JSONObject = JSONObject()
+    .put("id", id)
+    .put("role", role)
+    .put("content", content)
+    .put("createdAt", createdAt)
 
 private fun FieldAnswer.toJson(): JSONObject = JSONObject()
     .put("fieldId", fieldId)
@@ -313,6 +346,12 @@ private fun AgentDataPermissions.toJson(): JSONObject = JSONObject()
     .put("todos", todos)
     .put("templates", templates)
 
+private fun WebDevSyncSettings.toJson(): JSONObject = JSONObject()
+    .put("enabled", enabled)
+    .put("endpoint", endpoint)
+    .put("authToken", authToken)
+    .put("cloudProvider", cloudProvider)
+
 private fun List<LlmProviderSettings>.withLegacyLlmImport(
     legacy: LlmImportSettings?
 ): List<LlmProviderSettings> {
@@ -343,9 +382,44 @@ private fun List<AgentSettings>.withLegacyEncouragerAgent(
     return listOf(legacyAgent) + filterNot { it.id == legacyAgent.id }
 }
 
-private fun List<AgentSettings>.withDefaultAgents(): List<AgentSettings> {
-    val existingIds = map { it.id }.toSet()
-    return this + defaultAgents().filterNot { it.id in existingIds }
+private fun List<AgentSettings>.toUnifiedAgents(): List<AgentSettings> {
+    val unified = firstOrNull { it.id == "agent-unified" }
+    if (unified != null) {
+        return listOf(
+            unified.copy(
+                permissions = unified.permissions.copy(
+                    dailyRecords = true,
+                    todos = true,
+                    templates = true
+                )
+            )
+        )
+    }
+    val base = firstOrNull { it.enabled } ?: firstOrNull() ?: return defaultAgents()
+    val providerId = firstOrNull { it.providerId.isNotBlank() }?.providerId ?: base.providerId
+    val prompts = map { it.prompt }
+        .filter { it.isNotBlank() }
+        .distinct()
+        .joinToString("\n\n")
+        .ifBlank { DEFAULT_UNIFIED_AGENT_PROMPT }
+    return listOf(
+        AgentSettings(
+            id = "agent-unified",
+            enabled = base.enabled,
+            name = "日程 Agent",
+            providerId = providerId,
+            prompt = if (DEFAULT_UNIFIED_AGENT_PROMPT in prompts) {
+                prompts
+            } else {
+                "$DEFAULT_UNIFIED_AGENT_PROMPT\n\n$prompts"
+            }.take(500),
+            permissions = AgentDataPermissions(
+                dailyRecords = true,
+                todos = true,
+                templates = true
+            )
+        )
+    )
 }
 
 private fun JSONArray.toStringList(): List<String> {

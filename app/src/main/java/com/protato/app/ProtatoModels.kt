@@ -80,11 +80,25 @@ data class DailySummary(
     val focusMinutes: Int
 )
 
+data class AgentConversationMessage(
+    val id: String,
+    val role: String,
+    val content: String,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
 data class LlmImportSettings(
     val provider: String = "",
     val modelName: String = "",
     val endpoint: String = "",
     val apiKey: String = ""
+)
+
+data class WebDevSyncSettings(
+    val enabled: Boolean = false,
+    val endpoint: String = "",
+    val authToken: String = "",
+    val cloudProvider: String = "webdev"
 )
 
 data class LlmProviderSettings(
@@ -130,10 +144,14 @@ data class AppState(
     val projectRevision: Int = 1,
     val nickname: String = DEFAULT_NICKNAME,
     val llmProviders: List<LlmProviderSettings> = defaultLlmProviders(),
-    val agents: List<AgentSettings> = defaultAgents()
+    val agents: List<AgentSettings> = defaultAgents(),
+    val agentMessages: List<AgentConversationMessage> = defaultAgentConversation(),
+    val agentMemory: String = "",
+    val webDevSync: WebDevSyncSettings = WebDevSyncSettings()
 )
 
 const val DEFAULT_NICKNAME = "专注者"
+const val DEFAULT_UNIFIED_AGENT_PROMPT = "请称呼我为「{nickname}」。你是 Protato 的统一日程 Agent，负责通过连续对话帮助我确定一天的行程、整理待办、陪我完成番茄专注，并在一天结束时给出温和、具体、可执行的总结。你可以基于待办、番茄记录、复盘模板和同步记忆提出建议；涉及新增或修改待办时，只给草案，必须等我确认后再落地。"
 const val DEFAULT_ENCOURAGER_PROMPT = "请称呼我为「{nickname}」，用温和、具体、不油腻的方式鼓励我继续完成下一轮番茄。"
 const val DEFAULT_TODO_AGENT_PROMPT = "请称呼我为「{nickname}」，把我随口说出的计划整理成短小、明确、可执行的待办。"
 const val DEFAULT_TEMPLATE_AGENT_PROMPT = "请称呼我为「{nickname}」，根据我的复盘目标生成简洁、好填写的番茄记录模板。"
@@ -154,28 +172,24 @@ fun defaultLlmProviders(): List<LlmProviderSettings> {
 fun defaultAgents(): List<AgentSettings> {
     return listOf(
         AgentSettings(
-            id = "agent-encourager",
-            name = "鼓励师",
-            prompt = DEFAULT_ENCOURAGER_PROMPT,
-            permissions = AgentDataPermissions(dailyRecords = true)
-        ),
-        AgentSettings(
-            id = "agent-todo",
-            name = "待办整理 AI",
-            prompt = DEFAULT_TODO_AGENT_PROMPT,
-            permissions = AgentDataPermissions(todos = true)
-        ),
-        AgentSettings(
-            id = "agent-template",
-            name = "模板生成 AI",
-            prompt = DEFAULT_TEMPLATE_AGENT_PROMPT,
-            permissions = AgentDataPermissions(templates = true)
-        ),
-        AgentSettings(
-            id = "agent-record",
-            name = "记录复盘 AI",
-            prompt = DEFAULT_RECORD_AGENT_PROMPT,
-            permissions = AgentDataPermissions(dailyRecords = true)
+            id = "agent-unified",
+            name = "日程 Agent",
+            prompt = DEFAULT_UNIFIED_AGENT_PROMPT,
+            permissions = AgentDataPermissions(
+                dailyRecords = true,
+                todos = true,
+                templates = true
+            )
+        )
+    )
+}
+
+fun defaultAgentConversation(): List<AgentConversationMessage> {
+    return listOf(
+        AgentConversationMessage(
+            id = "agent-welcome",
+            role = "assistant",
+            content = "早上可以告诉我今天想推进什么；过程中我会帮你整理待办、安排番茄，结束后再一起收束成总结。"
         )
     )
 }
