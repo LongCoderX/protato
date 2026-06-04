@@ -4,8 +4,11 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Build
 import android.os.Bundle
+import android.widget.Toast
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -131,6 +134,7 @@ import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -145,6 +149,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.text.ParseException
 import java.text.SimpleDateFormat
+import java.util.Base64
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -193,11 +198,13 @@ private enum class MainTab(val label: String, val icon: ImageVector) {
 @Composable
 fun ProtatoApp() {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val store = remember { ProtatoStore(context) }
     var appState by remember { mutableStateOf(store.load()) }
     var selectedTodoId by rememberSaveable { mutableStateOf<String?>(null) }
     var timerMode by rememberSaveable { mutableStateOf(TimerMode.Focus) }
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var syncing by rememberSaveable { mutableStateOf(false) }
 
     val todayKey = dayKey(System.currentTimeMillis())
     val selectedTodo = appState.todos.firstOrNull {
@@ -221,8 +228,25 @@ fun ProtatoApp() {
         appState = nextState.withNextRevisionFrom(appState)
     }
 
+    fun requestSync() {
+        if (syncing) return
+        val stateSnapshot = appState
+        scope.launch {
+            syncing = true
+            val message = runCatching {
+                syncWebDevState(stateSnapshot)
+                "同步完成"
+            }.getOrElse { error ->
+                error.message ?: "同步失败"
+            }
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            syncing = false
+        }
+    }
+
     LaunchedEffect(appState) {
         store.save(appState)
+        TodoReminderScheduler(context).sync(appState.todos)
     }
 
     LaunchedEffect(activeSession?.mode) {
@@ -384,13 +408,19 @@ fun ProtatoApp() {
                             ))
                         },
                         onToggle = { item ->
+                            val nextCompleted = !item.completed
                             setAppState(appState.copy(
                                 todos = appState.todos.map {
-                                    if (it.id == item.id) it.copy(completed = !it.completed) else it
+                                    if (it.id == item.id) it.copy(completed = nextCompleted) else it
                                 }
                             ))
+                            if (nextCompleted) {
+                                TodoReminderScheduler(context).cancel(item.id)
+                                playTodoCompletedSound()
+                            }
                         },
                         onDelete = { item ->
+                            TodoReminderScheduler(context).cancel(item.id)
                             setAppState(appState.copy(todos = appState.todos.filterNot { it.id == item.id }))
                             if (selectedTodoId == item.id) selectedTodoId = null
                         },
@@ -402,6 +432,7 @@ fun ProtatoApp() {
                             ))
                         },
                         onDeleteMany = { itemIds ->
+                            itemIds.forEach { TodoReminderScheduler(context).cancel(it) }
                             setAppState(appState.copy(
                                 todos = appState.todos.filterNot { it.id in itemIds }
                             ))
@@ -472,6 +503,8 @@ fun ProtatoApp() {
                     MainTab.Settings -> SettingsScreen(
                         appState = appState,
                         appVersionName = BuildConfig.VERSION_NAME,
+                        syncing = syncing,
+                        onSync = ::requestSync,
                         onStateChange = { setAppState(it) }
                     )
                 }
@@ -2153,10 +2186,39 @@ private fun TodoMetadataStrip(
         todo.dueDate?.let { dueDate ->
             item { TodoDateChip(dueDate) }
         }
+        todo.reminderAt?.let { reminderAt ->
+            item { TodoReminderChip(reminderAt) }
+        }
         if (includeTags) {
             items(todo.tags, key = { it }) { tag ->
                 TodoTagChip(tag)
             }
+        }
+    }
+}
+
+@Composable
+private fun TodoReminderChip(reminderAt: Long) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(
+                Icons.Outlined.DateRange,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp)
+            )
+            Text(
+                formatTime(reminderAt),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold
+            )
         }
     }
 }
@@ -2375,11 +2437,13 @@ private fun TodoEditorDialog(
     var title by rememberSaveable(todo.id) { mutableStateOf(todo.title) }
     var draftTags by rememberSaveable(todo.id) { mutableStateOf(todo.tags) }
     var draftDueDate by rememberSaveable(todo.id) { mutableStateOf(todo.dueDate) }
+    var draftReminderAt by rememberSaveable(todo.id) { mutableStateOf(todo.reminderAt) }
     var plannedPomodorosText by rememberSaveable(todo.id) {
         mutableStateOf(todo.plannedPomodoros.coerceIn(1, 24).toString())
     }
     var editingTags by rememberSaveable(todo.id) { mutableStateOf(false) }
     var editingDate by rememberSaveable(todo.id) { mutableStateOf(false) }
+    var editingReminder by rememberSaveable(todo.id) { mutableStateOf(false) }
     val plannedPomodoros = plannedPomodorosText.toIntOrNull()?.coerceIn(1, 24) ?: 1
 
     AlertDialog(
@@ -2393,7 +2457,8 @@ private fun TodoEditorDialog(
                             title = title.trim(),
                             tags = draftTags,
                             dueDate = draftDueDate,
-                            plannedPomodoros = plannedPomodoros
+                            plannedPomodoros = plannedPomodoros,
+                            reminderAt = draftReminderAt
                         )
                     )
                 }
@@ -2434,6 +2499,12 @@ private fun TodoEditorDialog(
                         title = "标签",
                         value = if (draftTags.isEmpty()) "未添加标签" else draftTags.joinToString(" ") { "#$it" },
                         onClick = { editingTags = true }
+                    )
+                    SettingActionRow(
+                        icon = Icons.Outlined.DateRange,
+                        title = "提醒",
+                        value = draftReminderAt?.let(::formatTime) ?: "不提醒",
+                        onClick = { editingReminder = true }
                     )
                     Row(
                         modifier = Modifier
@@ -2498,10 +2569,98 @@ private fun TodoEditorDialog(
             }
         )
     }
+
+    if (editingReminder) {
+        TodoReminderEditDialog(
+            initialReminderAt = draftReminderAt,
+            onDismiss = { editingReminder = false },
+            onClear = {
+                draftReminderAt = null
+                editingReminder = false
+            },
+            onSelected = { reminderAt ->
+                draftReminderAt = reminderAt
+                editingReminder = false
+            }
+        )
+    }
 }
 
 private fun Set<String>.toggle(itemId: String): Set<String> {
     return if (itemId in this) this - itemId else this + itemId
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TodoReminderEditDialog(
+    initialReminderAt: Long?,
+    onDismiss: () -> Unit,
+    onClear: () -> Unit,
+    onSelected: (Long) -> Unit
+) {
+    val initialMillis = initialReminderAt ?: System.currentTimeMillis()
+    val state = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
+    var hourText by rememberSaveable(initialReminderAt) {
+        mutableStateOf(SimpleDateFormat("HH", Locale.getDefault()).format(Date(initialMillis)))
+    }
+    var minuteText by rememberSaveable(initialReminderAt) {
+        mutableStateOf(SimpleDateFormat("mm", Locale.getDefault()).format(Date(initialMillis)))
+    }
+    val hour = hourText.toIntOrNull()?.coerceIn(0, 23)
+    val minute = minuteText.toIntOrNull()?.coerceIn(0, 59)
+
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                enabled = state.selectedDateMillis != null && hour != null && minute != null,
+                onClick = {
+                    val selectedDay = state.selectedDateMillis ?: return@TextButton
+                    val day = utcDayKey(selectedDay)
+                    val reminderAt = dateKeyToLocalMillis(day, hour ?: 0, minute ?: 0)
+                    onSelected(reminderAt)
+                }
+            ) {
+                Text("设置提醒")
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = onClear) {
+                    Text("清除")
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("取消")
+                }
+            }
+        }
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            DatePicker(state = state)
+            Row(
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = hourText,
+                    onValueChange = { hourText = it.filter(Char::isDigit).take(2) },
+                    modifier = Modifier.weight(1f),
+                    label = { Text("小时") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+                OutlinedTextField(
+                    value = minuteText,
+                    onValueChange = { minuteText = it.filter(Char::isDigit).take(2) },
+                    modifier = Modifier.weight(1f),
+                    label = { Text("分钟") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -3478,6 +3637,8 @@ private fun RecordTodoChip(title: String, bound: Boolean) {
 private fun SettingsScreen(
     appState: AppState,
     appVersionName: String,
+    syncing: Boolean,
+    onSync: () -> Unit,
     onStateChange: (AppState) -> Unit
 ) {
     LazyColumn(
@@ -3512,6 +3673,8 @@ private fun SettingsScreen(
         item {
             WebDevSyncSettingsCard(
                 settings = appState.webDevSync,
+                syncing = syncing,
+                onSync = onSync,
                 onChange = { settings ->
                     onStateChange(appState.copy(webDevSync = settings))
                 }
@@ -3556,12 +3719,10 @@ private fun SettingsScreen(
 @Composable
 private fun WebDevSyncSettingsCard(
     settings: WebDevSyncSettings,
+    syncing: Boolean,
+    onSync: () -> Unit,
     onChange: (WebDevSyncSettings) -> Unit
 ) {
-    val tokenMask = "***"
-    val tokenDisplay = if (settings.authToken.isBlank()) "" else tokenMask
-    val providerPresets = listOf("webdev", "jianguoyun")
-    val presetEndpoints = providerPresets.map { it.syncEndpointPreset() }
     ElevatedCard(
         shape = RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth(),
@@ -3570,58 +3731,102 @@ private fun WebDevSyncSettingsCard(
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("WebDev 同步", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text("坚果云 WebDAV 同步", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Text(
-                        settings.cloudProvider.cloudProviderLabel(),
+                        "协议强制 HTTPS · /${JIANGUOYUN_WEBDAV_FOLDER_NAME}/",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 Switch(
                     checked = settings.enabled,
-                    onCheckedChange = { onChange(settings.copy(enabled = it)) }
+                    onCheckedChange = {
+                        onChange(
+                            settings.copy(
+                                enabled = it,
+                                endpoint = JIANGUOYUN_WEBDAV_BASE_URL,
+                                cloudProvider = JIANGUOYUN_WEBDAV_PROVIDER
+                            )
+                        )
+                    }
                 )
             }
             OutlinedTextField(
-                value = settings.endpoint,
-                onValueChange = { onChange(settings.copy(endpoint = it.take(240))) },
+                value = JIANGUOYUN_WEBDAV_FOLDER_URL,
+                onValueChange = { },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("同步接口地址") },
-                singleLine = true
+                label = { Text("同步目录（固定）") },
+                singleLine = true,
+                readOnly = true
             )
             OutlinedTextField(
-                value = tokenDisplay,
-                onValueChange = { value ->
-                    val nextToken = when {
-                        value.isBlank() -> ""
-                        value == tokenMask -> settings.authToken
-                        value.startsWith(tokenMask) -> value.removePrefix(tokenMask).take(240)
-                        else -> value.take(240)
-                    }
-                    onChange(settings.copy(authToken = nextToken))
+                value = JIANGUOYUN_WEBDAV_SYNC_FILE_URL,
+                onValueChange = { },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("同步文件（固定）") },
+                singleLine = true,
+                readOnly = true
+            )
+            OutlinedTextField(
+                value = settings.username,
+                onValueChange = {
+                    onChange(
+                        settings.copy(
+                            username = it.take(120),
+                            endpoint = JIANGUOYUN_WEBDAV_BASE_URL,
+                            cloudProvider = JIANGUOYUN_WEBDAV_PROVIDER
+                        )
+                    )
                 },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("同步 Token") },
-                singleLine = true
+                label = { Text("用户名（坚果云注册邮箱）") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
             )
-            SingleChoiceSegmentedButtonRow {
-                providerPresets.forEachIndexed { index, provider ->
-                    SegmentedButton(
-                        selected = settings.cloudProvider == provider,
-                        onClick = {
-                            val presetEndpoint = provider.syncEndpointPreset()
-                            val shouldReplaceEndpoint = settings.endpoint.isBlank() ||
-                                settings.endpoint in presetEndpoints
-                            onChange(
-                                settings.copy(
-                                    cloudProvider = provider,
-                                    endpoint = if (shouldReplaceEndpoint) presetEndpoint else settings.endpoint
-                                )
-                            )
-                        },
-                        shape = SegmentedButtonDefaults.itemShape(index, providerPresets.size),
-                        label = { Text(provider.cloudProviderLabel()) }
+            OutlinedTextField(
+                value = settings.authToken,
+                onValueChange = { value ->
+                    onChange(
+                        settings.copy(
+                            authToken = value.take(240),
+                            endpoint = JIANGUOYUN_WEBDAV_BASE_URL,
+                            cloudProvider = JIANGUOYUN_WEBDAV_PROVIDER
+                        )
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("密码（第三方应用密码）") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+            )
+            Text(
+                "必须使用网页端“安全选项”中生成的第三方应用密码，不可使用坚果云登录密码。",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall
+            )
+            Button(
+                enabled = settings.enabled &&
+                    settings.username.isNotBlank() &&
+                    settings.authToken.isNotBlank() &&
+                    !syncing,
+                onClick = onSync,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (syncing) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                } else {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_webdav_sync),
+                        contentDescription = "主动同步",
+                        modifier = Modifier.size(20.dp)
                     )
                 }
+                Spacer(Modifier.width(8.dp))
+                Text(if (syncing) "正在同步" else "立即同步")
             }
         }
     }
@@ -4712,6 +4917,7 @@ private fun RecordDialog(
             }
             loadingEncouragement = false
         }
+        playEncouragementSound()
     }
 
     val polishProvider = recordPolishProviderId.takeIf { it.isNotBlank() }?.let { providerId ->
@@ -5314,16 +5520,6 @@ private fun String.looksLikeTodoPlanningRequest(): Boolean {
     ).any { it in lowered }
 }
 
-private fun String.cloudProviderLabel(): String = when (this) {
-    "jianguoyun" -> "坚果云"
-    else -> "WebDev"
-}
-
-private fun String.syncEndpointPreset(): String = when (this) {
-    "jianguoyun" -> "https://dav.jianguoyun.com/dav/"
-    else -> ""
-}
-
 private fun localEncouragement(record: PendingRecord, nickname: String): String {
     val name = nickname.ifBlank { DEFAULT_NICKNAME }
     return "$name，你刚刚把 ${record.focusMinutes} 分钟真正交给了「${record.todoTitle}」。这不是一句轻飘飘的“不错”，而是一次清清楚楚的推进：你坐下来、守住了这一轮、让事情往前走了一步。先把这份完成感收下，然后用复盘写下一个最小下一步。你已经启动了惯性，接下来只需要顺着它再走一点。"
@@ -5388,9 +5584,11 @@ private suspend fun requestUnifiedAgentChat(
         append("\n```protato_tool")
         append("\n{\"tool\":\"propose_todo_updates\",\"edits\":[{\"id\":\"todoId\",\"title\":\"新标题\",\"dueDate\":\"yyyy-MM-dd\",\"tags\":[\"标签\"],\"plannedPomodoros\":1,\"completed\":false}]}")
         append("\n```")
-        append("\n同一次回复最多调用一次工具，todos/edits 最多 6 个；工具块之外可以用一句自然语言说明等待用户确认。")
+        append("\n工具调用必须是严格 JSON；不要输出伪 JSON、注释、单引号或多余字段。")
+        append(" 同一次回复最多调用一次工具，todos/edits 最多 6 个；工具块之外可以用一句自然语言说明等待用户确认。")
         append(" 不要把本轮对话中已经确认添加、已经拒绝、TodoList 已存在或无需变化的待办再次放入工具调用。")
-        append(" 回答要短、具体、可执行。")
+        append(" 你必须先在内部完成 Observation=识别用户真实意图和约束；Decision=判断新增/编辑/查询/普通回复；Action=回复或调用工具。")
+        append(" 不要把内部思考长篇写出来；自然语言只保留严谨结论、依据和等待确认的动作。回答要短、具体、可执行。")
         append("\n\n当前上下文：\n")
         append(state.toUnifiedAgentContext(nickname))
     }
@@ -5408,21 +5606,18 @@ private data class AgentToolResponse(
 )
 
 private fun parseAgentToolResponse(rawReply: String): AgentToolResponse {
-    val toolBlockRegex = Regex(
-        pattern = "```\\s*protato_tool\\s*\\n(.*?)\\n```",
-        options = setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
-    )
-    val todoDrafts = toolBlockRegex.findAll(rawReply)
-        .flatMap { match -> parseAgentTodoToolCall(match.groupValues[1]).asSequence() }
+    val toolJsonCandidates = extractAgentToolJsonCandidates(rawReply)
+    val todoDrafts = toolJsonCandidates
+        .flatMap { rawJson -> parseAgentTodoToolCall(rawJson).asSequence() }
         .toList()
         .distinctBy { it.title.lowercase(Locale.getDefault()) }
         .take(6)
-    val todoEdits = toolBlockRegex.findAll(rawReply)
-        .flatMap { match -> parseAgentTodoEditToolCall(match.groupValues[1]).asSequence() }
+    val todoEdits = toolJsonCandidates
+        .flatMap { rawJson -> parseAgentTodoEditToolCall(rawJson).asSequence() }
         .toList()
         .distinctBy(::todoEditDraftKey)
         .take(6)
-    val visibleReply = rawReply.replace(toolBlockRegex, "")
+    val visibleReply = stripAgentToolBlocks(rawReply)
         .trim()
         .ifBlank {
             if (todoDrafts.isNotEmpty() || todoEdits.isNotEmpty()) {
@@ -5436,6 +5631,74 @@ private fun parseAgentToolResponse(rawReply: String): AgentToolResponse {
         todoDrafts = todoDrafts,
         todoEdits = todoEdits
     )
+}
+
+private fun extractAgentToolJsonCandidates(rawReply: String): List<String> {
+    val fencedBlockRegex = Regex(
+        pattern = "```\\s*(?:protato_tool|json)?\\s*\\n(.*?)\\n```",
+        options = setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+    val fenced = fencedBlockRegex.findAll(rawReply).map { it.groupValues[1].trim() }
+    val bareJson = rawReply.lineSequence()
+        .map { it.trim() }
+        .filter { it.startsWith("{") && it.endsWith("}") && it.contains("\"tool\"") }
+    return (fenced + bareJson)
+        .flatMap(::expandToolJsonCandidate)
+        .distinct()
+        .toList()
+}
+
+private fun expandToolJsonCandidate(rawJson: String): List<String> {
+    return runCatching {
+        val root = JSONObject(rawJson.trim())
+        when {
+            root.has("tool") -> listOf(root.toString())
+            root.has("tool_calls") -> {
+                val calls = root.optJSONArray("tool_calls") ?: return@runCatching emptyList()
+                buildList {
+                    for (index in 0 until calls.length()) {
+                        val call = calls.optJSONObject(index) ?: continue
+                        if (call.has("tool")) {
+                            add(call.toString())
+                        } else {
+                            call.optJSONObject("function")?.let { function ->
+                                val name = function.optString("name")
+                                val arguments = function.optString("arguments")
+                                if (name.isNotBlank() && arguments.isNotBlank()) {
+                                    add(wrapFunctionToolArguments(name, arguments))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            else -> emptyList()
+        }
+    }.getOrElse { emptyList() }
+}
+
+private fun wrapFunctionToolArguments(name: String, arguments: String): String {
+    return runCatching {
+        val args = JSONObject(arguments)
+        args.put("tool", name).toString()
+    }.getOrElse { arguments }
+}
+
+private fun stripAgentToolBlocks(rawReply: String): String {
+    val fencedToolRegex = Regex(
+        pattern = "```\\s*(?:protato_tool|json)?\\s*\\n(.*?)\\n```",
+        options = setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+    return rawReply
+        .replace(fencedToolRegex) { match ->
+            if (match.value.contains("\"tool\"")) "" else match.value
+        }
+        .lineSequence()
+        .filterNot { line ->
+            val trimmed = line.trim()
+            trimmed.startsWith("{") && trimmed.endsWith("}") && trimmed.contains("\"tool\"")
+        }
+        .joinToString("\n")
 }
 
 private fun parseAgentTodoToolCall(rawJson: String): List<TodoDraft> {
@@ -6265,6 +6528,14 @@ private fun dateKeyToUtcMillis(key: String): Long? {
     }
 }
 
+private fun dateKeyToLocalMillis(key: String, hour: Int, minute: Int): Long {
+    val parser = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).apply {
+        isLenient = false
+    }
+    return parser.parse("$key ${hour.coerceIn(0, 23)}:${minute.coerceIn(0, 59)}")?.time
+        ?: System.currentTimeMillis()
+}
+
 private fun normalizedTodoDate(value: String): String? {
     val trimmed = value.trim()
     if (trimmed.isBlank() || !trimmed.matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) return null
@@ -6360,6 +6631,38 @@ private fun Context.startPomodoroService(action: String) {
     }
 }
 
+private fun playTodoCompletedSound() {
+    playToneSequence(
+        listOf(
+            ToneGenerator.TONE_PROP_ACK to 120,
+            ToneGenerator.TONE_PROP_BEEP to 120
+        )
+    )
+}
+
+private fun playEncouragementSound() {
+    playToneSequence(
+        listOf(
+            ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD to 140,
+            ToneGenerator.TONE_PROP_ACK to 140,
+            ToneGenerator.TONE_PROP_ACK to 180
+        )
+    )
+}
+
+private fun playToneSequence(tones: List<Pair<Int, Int>>) {
+    val generator = runCatching {
+        ToneGenerator(AudioManager.STREAM_NOTIFICATION, 80)
+    }.getOrNull() ?: return
+    Thread {
+        tones.forEach { (tone, durationMs) ->
+            generator.startTone(tone, durationMs)
+            Thread.sleep(durationMs.toLong() + 40L)
+        }
+        generator.release()
+    }.start()
+}
+
 private suspend fun fetchLlmModels(endpoint: String, apiKey: String): List<String> {
     return withContext(Dispatchers.IO) {
         val connection = (URL(normalizeModelsEndpoint(endpoint)).openConnection() as HttpURLConnection).apply {
@@ -6392,19 +6695,23 @@ private suspend fun fetchLlmModels(endpoint: String, apiKey: String): List<Strin
 
 private suspend fun syncWebDevState(state: AppState) {
     val settings = state.webDevSync
-    if (!settings.enabled || settings.endpoint.isBlank()) {
-        throw IllegalStateException("请先在设置里启用 WebDev 同步并填写接口地址")
+    if (!settings.enabled) {
+        throw IllegalStateException("请先在设置里启用坚果云 WebDAV 同步")
+    }
+    if (settings.username.isBlank() || settings.authToken.isBlank()) {
+        throw IllegalStateException("请填写坚果云注册邮箱和第三方应用密码")
     }
     return withContext(Dispatchers.IO) {
-        val connection = (URL(settings.endpoint.trim()).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
+        val credentials = "${settings.username.trim()}:${settings.authToken}"
+        val encodedCredentials = Base64.getEncoder().encodeToString(credentials.toByteArray(Charsets.UTF_8))
+        ensureJianguoyunSyncFolder(encodedCredentials)
+        val connection = (URL(JIANGUOYUN_WEBDAV_SYNC_FILE_URL).openConnection() as HttpURLConnection).apply {
+            requestMethod = "PUT"
             connectTimeout = 15_000
             readTimeout = 30_000
             doOutput = true
             setRequestProperty("Content-Type", "application/json")
-            if (settings.authToken.isNotBlank()) {
-                setRequestProperty("Authorization", "Bearer ${settings.authToken}")
-            }
+            setRequestProperty("Authorization", "Basic $encodedCredentials")
         }
         try {
             connection.outputStream.use { stream ->
@@ -6420,12 +6727,29 @@ private suspend fun syncWebDevState(state: AppState) {
     }
 }
 
+private fun ensureJianguoyunSyncFolder(encodedCredentials: String) {
+    val connection = (URL(JIANGUOYUN_WEBDAV_FOLDER_URL).openConnection() as HttpURLConnection).apply {
+        requestMethod = "MKCOL"
+        connectTimeout = 15_000
+        readTimeout = 30_000
+        setRequestProperty("Authorization", "Basic $encodedCredentials")
+    }
+    try {
+        val responseCode = connection.responseCode
+        if (responseCode !in setOf(200, 201, 204, 405)) {
+            throw IllegalStateException("创建坚果云同步目录失败：HTTP $responseCode")
+        }
+    } finally {
+        connection.disconnect()
+    }
+}
+
 private fun AppState.toWebDevSyncJson(): JSONObject {
     return JSONObject()
-        .put("schema", "protato.webdev.sync.v1")
+        .put("schema", "protato.jianguoyun.webdav.sync.v1")
         .put("projectRevision", projectRevision)
         .put("nickname", nickname)
-        .put("cloudProvider", webDevSync.cloudProvider)
+        .put("cloudProvider", JIANGUOYUN_WEBDAV_PROVIDER)
         .put("syncedAt", System.currentTimeMillis())
         .put("agentMemory", agentMemory)
         .put("agentMessages", agentMessages.toJsonArrayForSync { message ->

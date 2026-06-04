@@ -34,5 +34,8 @@
         <receiver
             android:name=".PomodoroAlarmReceiver"
             android:exported="false" />
+        <receiver
+            android:name=".TodoReminderReceiver"
+            android:exported="false" />
     </application>
 </manifest>

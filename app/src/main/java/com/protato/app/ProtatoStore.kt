@@ -87,7 +87,8 @@ private fun JSONArray.toTodos(): List<TodoItem> = mapObjects { item ->
         createdAt = item.optLong("createdAt", System.currentTimeMillis()),
         tags = item.optJSONArray("tags")?.toStringList().orEmpty(),
         dueDate = item.optString("dueDate").takeIf { it.isNotBlank() },
-        plannedPomodoros = item.optInt("plannedPomodoros", 1).coerceIn(1, 24)
+        plannedPomodoros = item.optInt("plannedPomodoros", 1).coerceIn(1, 24),
+        reminderAt = item.optLong("reminderAt", 0L).takeIf { it > 0L }
     )
 }.filter { it.id.isNotBlank() && it.title.isNotBlank() }
 
@@ -248,18 +249,12 @@ private fun JSONObject.toAgentDataPermissions(): AgentDataPermissions {
 }
 
 private fun JSONObject.toWebDevSyncSettings(): WebDevSyncSettings {
-    val rawCloudProvider = optString("cloudProvider", "webdev").ifBlank { "webdev" }
-    val legacyPresetEndpoints = setOf(
-        "https://openapi.aliyundrive.com",
-        "https://pan.baidu.com/rest/2.0/xpan"
-    )
-    val endpoint = optString("endpoint")
-    val migratedFromRemovedPreset = rawCloudProvider in setOf("aliyun", "baidu")
     return WebDevSyncSettings(
         enabled = optBoolean("enabled"),
-        endpoint = if (migratedFromRemovedPreset && endpoint in legacyPresetEndpoints) "" else endpoint,
+        endpoint = JIANGUOYUN_WEBDAV_BASE_URL,
+        username = optString("username"),
         authToken = optString("authToken"),
-        cloudProvider = if (migratedFromRemovedPreset) "webdev" else rawCloudProvider
+        cloudProvider = JIANGUOYUN_WEBDAV_PROVIDER
     )
 }
 
@@ -271,6 +266,7 @@ private fun TodoItem.toJson(): JSONObject = JSONObject()
     .put("tags", tags.toJsonArray { it })
     .put("dueDate", dueDate ?: "")
     .put("plannedPomodoros", plannedPomodoros)
+    .put("reminderAt", reminderAt ?: 0L)
 
 private fun RecordTemplate.toJson(): JSONObject = JSONObject()
     .put("id", id)
@@ -365,9 +361,10 @@ private fun AgentDataPermissions.toJson(): JSONObject = JSONObject()
 
 private fun WebDevSyncSettings.toJson(): JSONObject = JSONObject()
     .put("enabled", enabled)
-    .put("endpoint", endpoint)
+    .put("endpoint", JIANGUOYUN_WEBDAV_BASE_URL)
+    .put("username", username)
     .put("authToken", authToken)
-    .put("cloudProvider", cloudProvider)
+    .put("cloudProvider", JIANGUOYUN_WEBDAV_PROVIDER)
 
 private fun List<LlmProviderSettings>.withLegacyLlmImport(
     legacy: LlmImportSettings?

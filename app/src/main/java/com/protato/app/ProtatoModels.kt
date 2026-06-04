@@ -18,7 +18,8 @@ data class TodoItem(
     val createdAt: Long = System.currentTimeMillis(),
     val tags: List<String> = emptyList(),
     val dueDate: String? = null,
-    val plannedPomodoros: Int = 1
+    val plannedPomodoros: Int = 1,
+    val reminderAt: Long? = null
 )
 
 data class TemplateField(
@@ -97,9 +98,10 @@ data class LlmImportSettings(
 
 data class WebDevSyncSettings(
     val enabled: Boolean = false,
-    val endpoint: String = "",
+    val endpoint: String = JIANGUOYUN_WEBDAV_BASE_URL,
+    val username: String = "",
     val authToken: String = "",
-    val cloudProvider: String = "webdev"
+    val cloudProvider: String = JIANGUOYUN_WEBDAV_PROVIDER
 )
 
 data class LlmProviderSettings(
@@ -160,6 +162,12 @@ const val DEFAULT_TODO_AGENT_PROMPT = "请称呼我为「{nickname}」，把我�
 const val DEFAULT_TEMPLATE_AGENT_PROMPT = "请称呼我为「{nickname}」，根据我的复盘目标生成简洁、好填写的番茄记录模板。"
 const val DEFAULT_RECORD_AGENT_PROMPT = "请称呼我为「{nickname}」，基于我的番茄记录做具体、温和、可执行的复盘建议。"
 const val AGENT_STYLE_PROMPT = "允许在自然语言回复中使用少量贴切 emoji 表情，让语气更有人味；不要堆砌，结构化输出场景必须优先遵守指定格式。"
+const val JIANGUOYUN_WEBDAV_PROVIDER = "jianguoyun"
+const val JIANGUOYUN_WEBDAV_BASE_URL = "https://dav.jianguoyun.com/dav/"
+const val JIANGUOYUN_WEBDAV_FOLDER_NAME = "Protato"
+const val JIANGUOYUN_WEBDAV_FOLDER_URL = JIANGUOYUN_WEBDAV_BASE_URL + JIANGUOYUN_WEBDAV_FOLDER_NAME + "/"
+const val JIANGUOYUN_WEBDAV_SYNC_FILE_NAME = "protato-sync.json"
+const val JIANGUOYUN_WEBDAV_SYNC_FILE_URL = JIANGUOYUN_WEBDAV_FOLDER_URL + JIANGUOYUN_WEBDAV_SYNC_FILE_NAME
 
 fun defaultLlmProviders(): List<LlmProviderSettings> {
     return listOf(

@@ -23,7 +23,7 @@ class PomodoroAlarmReceiver : BroadcastReceiver() {
         store.save(
             state.copy(
                 activeSession = null,
-                pendingRecord = if (session.mode == TimerMode.Focus) pendingRecord else state.pendingRecord
+                pendingRecord = if (session.mode == TimerMode.Focus) pendingRecord else null
             )
         )
         PomodoroNotifications(context).cancelTimer()
