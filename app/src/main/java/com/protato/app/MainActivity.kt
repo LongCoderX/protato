@@ -89,6 +89,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwipeToDismissBox
@@ -99,6 +100,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -118,6 +120,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -131,6 +134,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Density
 import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.startForegroundService
 import java.io.BufferedReader
@@ -244,7 +248,7 @@ fun ProtatoApp() {
         }
     }
 
-    ProtatoTheme {
+    ProtatoTheme(fontScale = appState.fontScale) {
         var currentTab by rememberSaveable { mutableStateOf(MainTab.Agent) }
         Scaffold(
             bottomBar = {
@@ -472,7 +476,7 @@ fun ProtatoApp() {
 }
 
 @Composable
-private fun ProtatoTheme(content: @Composable () -> Unit) {
+private fun ProtatoTheme(fontScale: Float, content: @Composable () -> Unit) {
     val colors = lightColorScheme(
         primary = Color(0xFFE94F37),
         onPrimary = Color.White,
@@ -483,11 +487,16 @@ private fun ProtatoTheme(content: @Composable () -> Unit) {
         surfaceVariant = Color(0xFFF0EEE9),
         outline = Color(0xFFD1CCC1)
     )
-    MaterialTheme(
-        colorScheme = colors,
-        typography = MaterialTheme.typography,
-        content = content
-    )
+    val density = LocalDensity.current
+    CompositionLocalProvider(
+        LocalDensity provides Density(density.density, fontScale)
+    ) {
+        MaterialTheme(
+            colorScheme = colors,
+            typography = MaterialTheme.typography,
+            content = content
+        )
+    }
 }
 
 @Composable
@@ -878,6 +887,7 @@ private fun FocusScreen(
                 providers = providers,
                 agents = agents,
                 nickname = nickname,
+                recordPolishProviderId = appState.recordPolishProviderId,
                 onDismiss = onDismissRecord,
                 onSave = { answers ->
                     onSaveRecord(record, answers)
@@ -2635,7 +2645,7 @@ private fun TemplateEditorDialog(
                             .map { it.trim() }
                             .filter { it.isNotBlank() }
                         val canAdd = fieldTitle.isNotBlank() &&
-                            (fieldType == FieldType.ShortAnswer || options.isNotEmpty())
+                            (fieldType != FieldType.SingleChoice || options.isNotEmpty())
                         if (canAdd) {
                             fields = fields + TemplateField(
                                 id = newId(),
@@ -2988,7 +2998,7 @@ private fun DailySummaryCard(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        "${formatDayLabel(dayKey)} 总结 Agent",
+                        "${formatDayLabel(dayKey)} 总结",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -2997,25 +3007,23 @@ private fun DailySummaryCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                TextButton(
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                IconButton(
                     enabled = summary != null,
                     onClick = onOpen
                 ) {
-                    Text("查看")
+                    Icon(Icons.Outlined.Edit, contentDescription = "查看总结")
                 }
-            }
-            OutlinedButton(
-                enabled = records.isNotEmpty() && !loading,
-                onClick = onGenerate,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text(
-                    when {
-                        loading -> "生成中"
-                        summary == null -> "生成这天总结"
-                        else -> "重新生成"
-                    }
-                )
+                FilledIconButton(
+                    enabled = records.isNotEmpty() && !loading,
+                    onClick = onGenerate
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_robot_svg),
+                        contentDescription = "生成总结"
+                    )
+                }
             }
         }
     }
@@ -3057,8 +3065,9 @@ private fun TimelineRecordItem(
     onEdit: () -> Unit
 ) {
     var expanded by rememberSaveable(record.id) { mutableStateOf(false) }
-    val isBoundToTodo = record.todoId != null
     val answerCount = record.answers.size
+    val lineColor = Color(0xFFF59E0B)
+    val lineHeight = ((record.focusMinutes.coerceAtLeast(1) / 25f) * 74f).coerceIn(42f, 126f)
 
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -3072,22 +3081,30 @@ private fun TimelineRecordItem(
                 modifier = Modifier
                     .width(2.dp)
                     .height(if (isFirst) 10.dp else 18.dp)
-                    .background(
-                        if (isFirst) Color.Transparent else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
-                    )
+                    .background(if (isFirst) Color.Transparent else lineColor.copy(alpha = 0.55f))
             )
             Surface(
                 modifier = Modifier.size(18.dp),
                 shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.primary
+                color = lineColor
             ) {}
             Box(
                 modifier = Modifier
                     .width(2.dp)
-                    .height(if (isLast) 10.dp else 88.dp)
-                    .background(
-                        if (isLast) Color.Transparent else MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
-                    )
+                    .height(lineHeight.dp)
+                    .background(if (isLast) Color.Transparent else lineColor)
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                formatClockTime(record.endedAt),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelMedium
+            )
+            Text(
+                "${record.focusMinutes} 分钟",
+                color = lineColor,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold
             )
         }
         ElevatedCard(
@@ -3099,32 +3116,14 @@ private fun TimelineRecordItem(
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(verticalAlignment = Alignment.Top) {
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            formatClockTime(record.endedAt),
-                            color = MaterialTheme.colorScheme.primary,
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            record.todoTitle,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            RecordTodoChip(title = record.todoTitle, bound = isBoundToTodo)
-                        }
-                        Text(
-                            "${record.focusMinutes} 分钟 · ${record.templateName} · $answerCount 条回答",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    }
+                    Text(
+                        record.todoTitle,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
                     IconButton(onClick = onEdit) {
                         Icon(Icons.Outlined.Edit, contentDescription = "编辑记录")
                     }
@@ -3156,6 +3155,12 @@ private fun TimelineRecordItem(
                             .padding(14.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        Text(
+                            "${record.templateName} · $answerCount 条回答",
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
                         record.answers.forEach { answer ->
                             val title = template?.fields?.firstOrNull { it.id == answer.fieldId }?.title ?: "字段"
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
@@ -3368,6 +3373,14 @@ private fun SettingsScreen(
             )
         }
         item {
+            FontScaleSettingsCard(
+                fontScale = appState.fontScale,
+                onChange = { fontScale ->
+                    onStateChange(appState.copy(fontScale = fontScale.coerceIn(0.85f, 1.3f)))
+                }
+            )
+        }
+        item {
             WebDevSyncSettingsCard(
                 settings = appState.webDevSync,
                 onChange = { settings ->
@@ -3400,22 +3413,11 @@ private fun SettingsScreen(
             )
         }
         item {
-            UnifiedAgentProviderCard(
-                agents = appState.agents,
+            RecordPolishProviderCard(
                 providers = appState.llmProviders,
+                selectedProviderId = appState.recordPolishProviderId,
                 onProviderSelected = { providerId ->
-                    val current = selectUnifiedAgent(appState.agents) ?: defaultAgents().first()
-                    val unified = current.copy(
-                        id = "agent-unified",
-                        name = "对话",
-                        providerId = providerId,
-                        permissions = AgentDataPermissions(
-                            dailyRecords = true,
-                            todos = true,
-                            templates = true
-                        )
-                    )
-                    onStateChange(appState.copy(agents = listOf(unified)))
+                    onStateChange(appState.copy(recordPolishProviderId = providerId))
                 }
             )
         }
@@ -3546,6 +3548,31 @@ private fun NicknameSettingsCard(
                 modifier = Modifier.fillMaxWidth(),
                 label = { Text("本地昵称") },
                 singleLine = true
+            )
+        }
+    }
+}
+
+@Composable
+private fun FontScaleSettingsCard(
+    fontScale: Float,
+    onChange: (Float) -> Unit
+) {
+    ElevatedCard(
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("字体大小", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.weight(1f))
+                Text("x${"%.2f".format(fontScale)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Slider(
+                value = fontScale,
+                onValueChange = onChange,
+                valueRange = 0.85f..1.3f
             )
         }
     }
@@ -3834,6 +3861,62 @@ private fun LlmProviderEditDialog(
             }
         }
     )
+}
+
+@Composable
+private fun RecordPolishProviderCard(
+    providers: List<LlmProviderSettings>,
+    selectedProviderId: String,
+    onProviderSelected: (String) -> Unit
+) {
+    var providerMenuExpanded by remember { mutableStateOf(false) }
+    val selectedProvider = providers.firstOrNull { it.id == selectedProviderId }
+
+    ElevatedCard(
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("总结润色模型", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Box {
+                OutlinedButton(
+                    enabled = providers.isNotEmpty(),
+                    onClick = { providerMenuExpanded = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        selectedProvider?.agentProviderLabel() ?: "选择 Provider",
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Start
+                    )
+                    Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                }
+                DropdownMenu(
+                    expanded = providerMenuExpanded,
+                    onDismissRequest = { providerMenuExpanded = false }
+                ) {
+                    providers.forEach { provider ->
+                        DropdownMenuItem(
+                            text = { Text(provider.agentProviderLabel()) },
+                            onClick = {
+                                onProviderSelected(provider.id)
+                                providerMenuExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            Text(
+                selectedProvider?.let {
+                    if (it.isConfiguredForChat()) "已配置" else "请先补全模型和 API Key"
+                } ?: "未选择 Provider",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
 }
 
 @Composable
@@ -4402,15 +4485,20 @@ private fun RecordDialog(
     providers: List<LlmProviderSettings>,
     agents: List<AgentSettings>,
     nickname: String,
+    recordPolishProviderId: String,
     onDismiss: () -> Unit,
     onSave: (List<FieldAnswer>) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     val answers = remember(template.id) { mutableStateMapOf<String, String>() }
     val missingRequired = hasMissingRequiredAnswers(template, answers)
     var encouragement by remember(pendingRecord.startedAt) {
         mutableStateOf(localEncouragement(pendingRecord, nickname))
     }
     var loadingEncouragement by remember(pendingRecord.startedAt) { mutableStateOf(false) }
+    var polishPreview by remember { mutableStateOf<String?>(null) }
+    var polishing by remember { mutableStateOf(false) }
+    var polishFieldId by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(pendingRecord.startedAt, agents, providers) {
         val agent = selectEncouragerAgent(agents)
@@ -4432,6 +4520,10 @@ private fun RecordDialog(
             loadingEncouragement = false
         }
     }
+
+    val polishProvider = recordPolishProviderId.takeIf { it.isNotBlank() }?.let { providerId ->
+        providers.firstOrNull { it.id == providerId }
+    } ?: providers.firstOrNull { it.isConfiguredForChat() }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -4471,10 +4563,61 @@ private fun RecordDialog(
                         )
                     }
                 }
-                RecordAnswerFields(template = template, answers = answers)
+                RecordAnswerFields(
+                    template = template,
+                    answers = answers,
+                    onPolish = { fieldId, rawText ->
+                        val provider = polishProvider
+                        if (provider == null || !provider.isConfiguredForChat()) return@RecordAnswerFields
+                        polishing = true
+                        scope.launch {
+                            val polished = runCatching {
+                                requestRecordPolish(
+                                    rawText = rawText,
+                                    pendingRecord = pendingRecord,
+                                    template = template,
+                                    answers = answers,
+                                    provider = provider,
+                                    nickname = nickname
+                                )
+                            }.getOrElse { rawText }
+                            polishFieldId = fieldId
+                            polishPreview = polished
+                            polishing = false
+                        }
+                    },
+                    polishing = polishing,
+                    showPolishButton = true
+                )
             }
         }
     )
+
+    polishPreview?.let { preview ->
+        AlertDialog(
+            onDismissRequest = { polishPreview = null; polishFieldId = null },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        polishFieldId?.let { fieldId ->
+                            answers[fieldId] = preview
+                        }
+                        polishPreview = null
+                        polishFieldId = null
+                    }
+                ) {
+                    Text("替换")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { polishPreview = null; polishFieldId = null }) {
+                    Text("保留原文")
+                }
+            },
+            title = { Text("确认替换") },
+            text = { Text(preview) }
+        )
+    }
 }
 
 @Composable
@@ -4552,7 +4695,13 @@ private fun RecordEditDialog(
                     onSelected = { selectedTodoId = it }
                 )
                 HorizontalDivider()
-                RecordAnswerFields(template = editableTemplate, answers = answers)
+                RecordAnswerFields(
+                    template = editableTemplate,
+                    answers = answers,
+                    onPolish = { _, _ -> },
+                    polishing = false,
+                    showPolishButton = false
+                )
             }
         }
     )
@@ -4596,14 +4745,28 @@ private fun RecordTodoSelector(
 @Composable
 private fun RecordAnswerFields(
     template: RecordTemplate,
-    answers: androidx.compose.runtime.snapshots.SnapshotStateMap<String, String>
+    answers: androidx.compose.runtime.snapshots.SnapshotStateMap<String, String>,
+    onPolish: (String, String) -> Unit,
+    polishing: Boolean,
+    showPolishButton: Boolean
 ) {
     template.fields.forEach { field ->
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(
-                text = if (field.required) "${field.title} *" else field.title,
-                fontWeight = FontWeight.SemiBold
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = if (field.required) "${field.title} *" else field.title,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.weight(1f)
+                )
+                if (showPolishButton && field.id == "field-summary-draft") {
+                    TextButton(
+                        enabled = answers[field.id].orEmpty().isNotBlank() && !polishing,
+                        onClick = { onPolish(field.id, answers[field.id].orEmpty()) }
+                    ) {
+                        Text(if (polishing) "润色中" else "AI 润色")
+                    }
+                }
+            }
             when (field.type) {
                 FieldType.SingleChoice -> field.options.forEach { option ->
                     Row(
@@ -4623,6 +4786,14 @@ private fun RecordAnswerFields(
                     onValueChange = { answers[field.id] = it },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2
+                )
+
+                FieldType.Attachment -> OutlinedTextField(
+                    value = answers[field.id].orEmpty(),
+                    onValueChange = { answers[field.id] = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("粘贴语音/图片链接或文件路径") },
+                    singleLine = true
                 )
             }
         }
@@ -4721,6 +4892,7 @@ private fun TimerMode.durationRange(): IntRange = when (this) {
 private fun FieldType.label(): String = when (this) {
     FieldType.SingleChoice -> "单选"
     FieldType.ShortAnswer -> "简答"
+    FieldType.Attachment -> "附件"
 }
 
 private fun AgentDataPermissions.label(): String {
@@ -4818,6 +4990,41 @@ private fun String.syncEndpointPreset(): String = when (this) {
 private fun localEncouragement(record: PendingRecord, nickname: String): String {
     val name = nickname.ifBlank { DEFAULT_NICKNAME }
     return "$name，你刚刚把 ${record.focusMinutes} 分钟真正交给了「${record.todoTitle}」。这不是一句轻飘飘的“不错”，而是一次清清楚楚的推进：你坐下来、守住了这一轮、让事情往前走了一步。先把这份完成感收下，然后用复盘写下一个最小下一步。你已经启动了惯性，接下来只需要顺着它再走一点。"
+}
+
+private suspend fun requestRecordPolish(
+    rawText: String,
+    pendingRecord: PendingRecord,
+    template: RecordTemplate,
+    answers: Map<String, String>,
+    provider: LlmProviderSettings,
+    nickname: String
+): String {
+    val systemPrompt = buildString {
+        append("你是 Protato 的总结润色 Agent。你的任务是把用户刚填的草稿润色成更通顺、更清晰、更适合放进记录的中文总结。")
+        append(" 你要提炼要点，合并重复表达，保持真实，不要添加没有出现过的事实。")
+        append(" 输出必须是可直接替换的最终文本，不要解释过程，不要分点太碎。")
+        append(" 语气温和、自然、简洁。")
+    }
+    val context = buildString {
+        append("用户昵称：${nickname.ifBlank { DEFAULT_NICKNAME }}\n")
+        append("任务：${pendingRecord.todoTitle}\n")
+        append("时长：${pendingRecord.focusMinutes} 分钟\n")
+        append("模板：${template.name}\n")
+        append("当前字段：\n")
+        template.fields.forEach { field ->
+            append("- ${field.title}：${answers[field.id].orEmpty()}\n")
+        }
+        append("待润色草稿：\n")
+        append(rawText)
+    }
+    return requestLlmChat(
+        provider = provider,
+        messages = listOf(
+            LlmChatMessage("system", systemPrompt),
+            LlmChatMessage("user", context)
+        )
+    )
 }
 
 private suspend fun requestUnifiedAgentChat(

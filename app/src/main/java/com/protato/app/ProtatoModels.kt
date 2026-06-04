@@ -7,7 +7,8 @@ enum class TimerMode {
 
 enum class FieldType {
     SingleChoice,
-    ShortAnswer
+    ShortAnswer,
+    Attachment
 }
 
 data class TodoItem(
@@ -147,7 +148,9 @@ data class AppState(
     val agents: List<AgentSettings> = defaultAgents(),
     val agentMessages: List<AgentConversationMessage> = defaultAgentConversation(),
     val agentMemory: String = "",
-    val webDevSync: WebDevSyncSettings = WebDevSyncSettings()
+    val webDevSync: WebDevSyncSettings = WebDevSyncSettings(),
+    val recordPolishProviderId: String = "",
+    val fontScale: Float = 1.0f
 )
 
 const val DEFAULT_NICKNAME = "专注者"
@@ -216,6 +219,21 @@ fun defaultTemplate(): RecordTemplate {
                 id = "field-next",
                 title = "下一步",
                 type = FieldType.ShortAnswer
+            ),
+            TemplateField(
+                id = "field-summary-draft",
+                title = "总结草稿",
+                type = FieldType.ShortAnswer
+            ),
+            TemplateField(
+                id = "field-voice",
+                title = "语音/录音",
+                type = FieldType.Attachment
+            ),
+            TemplateField(
+                id = "field-image",
+                title = "图片/截图",
+                type = FieldType.Attachment
             )
         )
     )

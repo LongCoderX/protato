@@ -48,7 +48,9 @@ class ProtatoStore(context: Context) {
                     ?: defaultAgentConversation(),
                 agentMemory = root.optString("agentMemory"),
                 webDevSync = root.optJSONObject("webDevSync")?.toWebDevSyncSettings()
-                    ?: WebDevSyncSettings()
+                    ?: WebDevSyncSettings(),
+                recordPolishProviderId = root.optString("recordPolishProviderId"),
+                fontScale = root.optDouble("fontScale", 1.0).toFloat().coerceIn(0.85f, 1.3f)
             )
         }.getOrElse { AppState() }
     }
@@ -71,6 +73,8 @@ class ProtatoStore(context: Context) {
             .put("agentMessages", state.agentMessages.toJsonArray { it.toJson() })
             .put("agentMemory", state.agentMemory)
             .put("webDevSync", state.webDevSync.toJson())
+            .put("recordPolishProviderId", state.recordPolishProviderId)
+            .put("fontScale", state.fontScale.toDouble())
         file.writeText(root.toString(2))
     }
 }
