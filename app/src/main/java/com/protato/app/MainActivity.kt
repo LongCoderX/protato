@@ -8,6 +8,7 @@ import android.media.AudioManager
 import android.media.ToneGenerator
 import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -160,6 +161,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+
+private const val SYNC_LOG_TAG = "ProtatoSync"
 
 class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -6706,7 +6709,7 @@ private suspend fun syncWebDevState(state: AppState) {
         val encodedCredentials = Base64.getEncoder().encodeToString(credentials.toByteArray(Charsets.UTF_8))
         ensureJianguoyunSyncFolder(encodedCredentials)
         val connection = (URL(JIANGUOYUN_WEBDAV_SYNC_FILE_URL).openConnection() as HttpURLConnection).apply {
-            requestMethod = "PUT"
+            setHttpMethod("PUT")
             connectTimeout = 15_000
             readTimeout = 30_000
             doOutput = true
@@ -6719,7 +6722,14 @@ private suspend fun syncWebDevState(state: AppState) {
             }
             val responseCode = connection.responseCode
             if (responseCode !in 200..299) {
-                throw IllegalStateException("同步失败：HTTP $responseCode")
+                val responseBody = connection.readResponseBody()
+                Log.e(SYNC_LOG_TAG, "PUT failed: HTTP $responseCode body=$responseBody")
+                if (responseCode == 409) {
+                    throw IllegalStateException(
+                        "同步失败：坚果云目录 /${JIANGUOYUN_WEBDAV_FOLDER_NAME}/ 不存在或路径冲突 ${responseBody.toToastDetail()}"
+                    )
+                }
+                throw IllegalStateException("同步失败：HTTP $responseCode ${responseBody.toToastDetail()}")
             }
         } finally {
             connection.disconnect()
@@ -6728,8 +6738,14 @@ private suspend fun syncWebDevState(state: AppState) {
 }
 
 private fun ensureJianguoyunSyncFolder(encodedCredentials: String) {
-    val connection = (URL(JIANGUOYUN_WEBDAV_FOLDER_URL).openConnection() as HttpURLConnection).apply {
-        requestMethod = "MKCOL"
+    val connection = URL(JIANGUOYUN_WEBDAV_FOLDER_URL).openConnection() as HttpURLConnection
+    runCatching {
+        connection.setHttpMethod("MKCOL")
+    }.getOrElse { error ->
+        connection.disconnect()
+        throw IllegalStateException("创建坚果云同步目录失败：无法设置 WebDAV MKCOL 方法", error)
+    }
+    connection.apply {
         connectTimeout = 15_000
         readTimeout = 30_000
         setRequestProperty("Authorization", "Basic $encodedCredentials")
@@ -6737,11 +6753,73 @@ private fun ensureJianguoyunSyncFolder(encodedCredentials: String) {
     try {
         val responseCode = connection.responseCode
         if (responseCode !in setOf(200, 201, 204, 405)) {
-            throw IllegalStateException("创建坚果云同步目录失败：HTTP $responseCode")
+            val responseBody = connection.readResponseBody()
+            Log.e(SYNC_LOG_TAG, "MKCOL failed: HTTP $responseCode body=$responseBody")
+            throw IllegalStateException("创建坚果云同步目录失败：HTTP $responseCode ${responseBody.toToastDetail()}")
         }
     } finally {
         connection.disconnect()
     }
+}
+
+private fun HttpURLConnection.readResponseBody(): String {
+    val stream = errorStream ?: runCatching { inputStream }.getOrNull() ?: return ""
+    return runCatching {
+        BufferedReader(InputStreamReader(stream)).use { it.readText() }
+    }.getOrDefault("")
+}
+
+private fun String.toToastDetail(): String {
+    val normalized = replace(Regex("\\s+"), " ").trim()
+    return if (normalized.isBlank()) "" else normalized.take(160)
+}
+
+private fun HttpURLConnection.setHttpMethod(method: String) {
+    runCatching {
+        requestMethod = method
+    }.getOrElse { error ->
+        if (!setHttpMethodReflectively(method)) {
+            throw IllegalStateException("设置 HTTP 方法 $method 失败", error)
+        }
+    }
+}
+
+private fun HttpURLConnection.setHttpMethodReflectively(method: String): Boolean {
+    val visited = mutableSetOf<Any>()
+    var target: Any? = this
+    while (target != null && visited.add(target)) {
+        if (target.setFieldValue("method", method) == true) return true
+        target = target.getFieldValue("delegate")
+    }
+    return false
+}
+
+private fun Any.setFieldValue(fieldName: String, value: Any): Boolean? {
+    val field = findField(javaClass, fieldName) ?: return null
+    return runCatching {
+        field.isAccessible = true
+        field.set(this, value)
+        true
+    }.getOrDefault(false)
+}
+
+private fun Any.getFieldValue(fieldName: String): Any? {
+    val field = findField(javaClass, fieldName) ?: return null
+    return runCatching {
+        field.isAccessible = true
+        field.get(this)
+    }.getOrNull()
+}
+
+private fun findField(type: Class<*>, fieldName: String): java.lang.reflect.Field? {
+    var current: Class<*>? = type
+    while (current != null) {
+        runCatching {
+            return current.getDeclaredField(fieldName)
+        }
+        current = current.superclass
+    }
+    return null
 }
 
 private fun AppState.toWebDevSyncJson(): JSONObject {
