@@ -199,7 +199,10 @@ fun ProtatoApp() {
     var timerMode by rememberSaveable { mutableStateOf(TimerMode.Focus) }
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
-    val selectedTodo = appState.todos.firstOrNull { it.id == selectedTodoId }
+    val todayKey = dayKey(System.currentTimeMillis())
+    val selectedTodo = appState.todos.firstOrNull {
+        it.id == selectedTodoId && !it.completed && it.dueDate == todayKey
+    }
     val selectedTemplate = appState.templates.firstOrNull { it.id == appState.selectedTemplateId }
         ?: appState.templates.firstOrNull()
         ?: defaultTemplate()
@@ -516,10 +519,17 @@ private fun AgentScreen(
     var loading by rememberSaveable { mutableStateOf(false) }
     var errorText by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingTodos by remember { mutableStateOf<List<TodoDraft>>(emptyList()) }
+    var pendingTodoEdits by remember { mutableStateOf<List<TodoEditDraft>>(emptyList()) }
     var handledTodoDraftKeys by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    var handledTodoEditKeys by rememberSaveable { mutableStateOf(emptyList<String>()) }
     val listState = rememberLazyListState()
     val canStartNewConversation = !loading &&
-        (appState.agentMessages.isNotEmpty() || pendingTodos.isNotEmpty() || errorText != null)
+        (
+            appState.agentMessages.isNotEmpty() ||
+                pendingTodos.isNotEmpty() ||
+                pendingTodoEdits.isNotEmpty() ||
+                errorText != null
+            )
 
     LaunchedEffect(appState.agentMessages.size, loading) {
         val itemCount = appState.agentMessages.size + if (loading) 1 else 0
@@ -587,6 +597,46 @@ private fun AgentScreen(
             )
         }
 
+        if (pendingTodoEdits.isNotEmpty()) {
+            AgentTodoEditDraftCard(
+                edits = pendingTodoEdits,
+                todos = appState.todos,
+                onApply = {
+                    handledTodoEditKeys = (handledTodoEditKeys + pendingTodoEdits.map(::todoEditDraftKey))
+                        .distinct()
+                        .takeLast(120)
+                    val editsById = pendingTodoEdits.associateBy { it.id }
+                    val updatedTodos = appState.todos.map { todo ->
+                        editsById[todo.id]?.applyTo(todo) ?: todo
+                    }
+                    onStateChange(
+                        appState.copy(
+                            todos = updatedTodos,
+                            agentMessages = appState.agentMessages.appendAgentMessage(
+                                role = "assistant",
+                                content = "已更新 ${pendingTodoEdits.size} 个待办。"
+                            )
+                        )
+                    )
+                    pendingTodoEdits = emptyList()
+                },
+                onDismiss = {
+                    handledTodoEditKeys = (handledTodoEditKeys + pendingTodoEdits.map(::todoEditDraftKey))
+                        .distinct()
+                        .takeLast(120)
+                    onStateChange(
+                        appState.copy(
+                            agentMessages = appState.agentMessages.appendAgentMessage(
+                                role = "assistant",
+                                content = "已拒绝本次待办编辑草案。"
+                            )
+                        )
+                    )
+                    pendingTodoEdits = emptyList()
+                }
+            )
+        }
+
         errorText?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 
         Row(
@@ -607,7 +657,9 @@ private fun AgentScreen(
                 onClick = {
                     input = ""
                     pendingTodos = emptyList()
+                    pendingTodoEdits = emptyList()
                     handledTodoDraftKeys = emptyList()
+                    handledTodoEditKeys = emptyList()
                     errorText = null
                     onStateChange(appState.copy(agentMessages = emptyList()))
                 }
@@ -625,6 +677,7 @@ private fun AgentScreen(
                     )
                     onStateChange(userState)
                     pendingTodos = emptyList()
+                    pendingTodoEdits = emptyList()
                     scope.launch {
                         loading = true
                         val shouldPlan = text.looksLikeTodoPlanningRequest()
@@ -670,11 +723,20 @@ private fun AgentScreen(
                                 existingTodos = userState.todos,
                                 handledKeys = handledTodoDraftKeys.toSet()
                             )
+                        val finalTodoEdits = toolResponse.todoEdits.filterNewTodoEdits(
+                            existingTodos = userState.todos,
+                            handledKeys = handledTodoEditKeys.toSet()
+                        )
                         val reply = if (
-                            (toolResponse.todoDrafts.isNotEmpty() || todoDrafts.isNotEmpty()) &&
-                            finalTodoDrafts.isEmpty()
+                            (
+                                toolResponse.todoDrafts.isNotEmpty() ||
+                                    todoDrafts.isNotEmpty() ||
+                                    toolResponse.todoEdits.isNotEmpty()
+                                ) &&
+                            finalTodoDrafts.isEmpty() &&
+                            finalTodoEdits.isEmpty()
                         ) {
-                            "这些待办草案已经确认、拒绝或存在于 TodoList，我不会重复提交。"
+                            "这些待办草案或编辑草案已经确认、拒绝或不再需要处理，我不会重复提交。"
                         } else {
                             toolResponse.visibleReply
                         }
@@ -687,6 +749,7 @@ private fun AgentScreen(
                             )
                         )
                         pendingTodos = finalTodoDrafts
+                        pendingTodoEdits = finalTodoEdits
                         loading = false
                     }
                 }
@@ -786,6 +849,56 @@ private fun AgentTodoDraftCard(
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(draft.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         TodoDraftMetadataRow(draft)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AgentTodoEditDraftCard(
+    edits: List<TodoEditDraft>,
+    todos: List<TodoItem>,
+    onApply: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ElevatedCard(
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("待办编辑请求", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                TextButton(onClick = onDismiss) {
+                    Text("拒绝")
+                }
+                TextButton(onClick = onApply) {
+                    Text("确认更新")
+                }
+            }
+            edits.take(5).forEach { edit ->
+                val original = todos.firstOrNull { it.id == edit.id }
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            original?.title ?: edit.id,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            edit.previewTitle(original),
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        TodoDraftMetadataRow(edit.toPreviewDraft(original))
                     }
                 }
             }
@@ -1048,8 +1161,9 @@ private fun TimerCard(
     }
 
     if (choosingTodo && showFocusControls) {
+        val todayKey = dayKey(System.currentTimeMillis())
         TodoSelectDialog(
-            todos = todos.filterNot { it.completed },
+            todos = todos.filter { !it.completed && it.dueDate == todayKey },
             selectedTodoId = selectedTodoId,
             onDismiss = { choosingTodo = false },
             onSelected = { todoId ->
@@ -1149,7 +1263,7 @@ private fun TodoSelectDialog(
                 }
                 if (todos.isEmpty()) {
                     item {
-                        Text("还没有未完成待办。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("今天还没有未完成待办。", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
                     items(todos, key = { it.id }) { todo ->
@@ -2148,6 +2262,7 @@ private fun TodoTagChip(tag: String) {
 private fun TodoSwipeBackground(dismissValue: SwipeToDismissBoxValue) {
     val deleting = dismissValue == SwipeToDismissBoxValue.EndToStart
     val editing = dismissValue == SwipeToDismissBoxValue.StartToEnd
+    val editContentColor = if (editing) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
     val backgroundColor = when {
         deleting -> MaterialTheme.colorScheme.error
         editing -> MaterialTheme.colorScheme.tertiary
@@ -2163,11 +2278,23 @@ private fun TodoSwipeBackground(dismissValue: SwipeToDismissBoxValue) {
         horizontalArrangement = if (deleting) Arrangement.End else Arrangement.Start,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            imageVector = if (deleting) Icons.Outlined.Delete else Icons.Outlined.Edit,
-            contentDescription = if (deleting) "删除待办" else "编辑待办",
-            tint = if (deleting || editing) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        if (!deleting) {
+            Icon(
+                imageVector = Icons.Outlined.Edit,
+                contentDescription = "编辑待办",
+                tint = editContentColor
+            )
+            Spacer(Modifier.width(8.dp))
+            Text("编辑", color = editContentColor, fontWeight = FontWeight.SemiBold)
+        } else {
+            Text("删除", color = Color.White, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                imageVector = Icons.Outlined.Delete,
+                contentDescription = "删除待办",
+                tint = Color.White
+            )
+        }
     }
 }
 
@@ -3589,6 +3716,12 @@ private fun LlmProviderListCard(
     onDelete: (LlmProviderSettings) -> Unit
 ) {
     var editingProvider by remember { mutableStateOf<LlmProviderSettings?>(null) }
+    var providerMenuExpanded by remember { mutableStateOf(false) }
+    var selectedProviderId by rememberSaveable(providers.map { it.id }.joinToString("|")) {
+        mutableStateOf(providers.firstOrNull()?.id.orEmpty())
+    }
+    val selectedProvider = providers.firstOrNull { it.id == selectedProviderId }
+        ?: providers.firstOrNull()
 
     ElevatedCard(
         shape = RoundedCornerShape(8.dp),
@@ -3617,7 +3750,36 @@ private fun LlmProviderListCard(
                     Text("自定义")
                 }
             }
-            providers.forEach { provider ->
+            Box {
+                OutlinedButton(
+                    onClick = { providerMenuExpanded = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        selectedProvider?.agentProviderLabel() ?: "选择 Provider",
+                        modifier = Modifier.weight(1f),
+                        textAlign = TextAlign.Start,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                }
+                DropdownMenu(
+                    expanded = providerMenuExpanded,
+                    onDismissRequest = { providerMenuExpanded = false }
+                ) {
+                    providers.forEach { provider ->
+                        DropdownMenuItem(
+                            text = { Text(provider.agentProviderLabel()) },
+                            onClick = {
+                                selectedProviderId = provider.id
+                                providerMenuExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            selectedProvider?.let { provider ->
                 LlmProviderRow(provider = provider, onClick = { editingProvider = provider })
             }
         }
@@ -4970,6 +5132,61 @@ private fun List<TodoDraft>.filterNewTodoDrafts(
     }
 }
 
+private data class TodoEditDraft(
+    val id: String,
+    val title: String? = null,
+    val dueDate: String? = null,
+    val tags: List<String>? = null,
+    val plannedPomodoros: Int? = null,
+    val completed: Boolean? = null
+) {
+    fun applyTo(todo: TodoItem): TodoItem {
+        return todo.copy(
+            title = title ?: todo.title,
+            dueDate = dueDate ?: todo.dueDate,
+            tags = tags ?: todo.tags,
+            plannedPomodoros = plannedPomodoros ?: todo.plannedPomodoros,
+            completed = completed ?: todo.completed
+        )
+    }
+
+    fun previewTitle(original: TodoItem?): String {
+        return title ?: original?.title ?: "待办更新"
+    }
+
+    fun toPreviewDraft(original: TodoItem?): TodoDraft {
+        return TodoDraft(
+            title = previewTitle(original),
+            dueDate = dueDate ?: original?.dueDate,
+            tags = tags ?: original?.tags.orEmpty(),
+            plannedPomodoros = plannedPomodoros ?: original?.plannedPomodoros ?: 1
+        )
+    }
+}
+
+private fun todoEditDraftKey(edit: TodoEditDraft): String {
+    return listOf(
+        edit.id,
+        edit.title.orEmpty(),
+        edit.dueDate.orEmpty(),
+        edit.tags?.joinToString(",").orEmpty(),
+        edit.plannedPomodoros?.toString().orEmpty(),
+        edit.completed?.toString().orEmpty()
+    ).joinToString("|").lowercase(Locale.getDefault())
+}
+
+private fun List<TodoEditDraft>.filterNewTodoEdits(
+    existingTodos: List<TodoItem>,
+    handledKeys: Set<String>
+): List<TodoEditDraft> {
+    val todosById = existingTodos.associateBy { it.id }
+    return filter { edit ->
+        val original = todosById[edit.id] ?: return@filter false
+        val updated = edit.applyTo(original)
+        todoEditDraftKey(edit) !in handledKeys && updated != original
+    }
+}
+
 private data class TodoPlanDraft(
     val action: String,
     val objectText: String,
@@ -5158,15 +5375,21 @@ private suspend fun requestUnifiedAgentChat(
         appendAgentStylePrompt()
         append("\n你现在是 Protato 唯一的统一 Agent。你需要通过连续对话帮助用户确定一天行程、拆解待办、选择下一轮番茄对象，并在结束时总结。")
         append(" 你可以读取待办、今日番茄记录、复盘模板和长期记忆。")
+        append(" 你可以按日期、标签、完成状态和关键词查询/筛选上下文中的待办，然后基于 todoId 提出编辑草案。")
         append(" 如果要新增待办，必须调用工具 propose_todos；用户确认后才会写入 TodoList，不要声称已经添加。")
+        append(" 如果要修改已有待办，先根据上下文中的 todoId 精确定位，再调用工具 propose_todo_updates；用户确认后才会更新。")
         append("\n\n可用工具：")
         append("\npropose_todos：在对话中提出待办草案，由 App 展示确认/拒绝卡片。")
         append("\n调用格式必须放在独立 Markdown 代码块中：")
         append("\n```protato_tool")
         append("\n{\"tool\":\"propose_todos\",\"todos\":[{\"title\":\"明确可执行的待办\",\"dueDate\":\"yyyy-MM-dd 或 null\",\"tags\":[\"标签\"],\"plannedPomodoros\":1}]}")
         append("\n```")
-        append("\n同一次回复最多调用一次工具，todos 最多 6 个；工具块之外可以用一句自然语言说明等待用户确认。")
-        append(" 不要把本轮对话中已经确认添加、已经拒绝、或 TodoList 已存在的待办再次放入工具调用。")
+        append("\npropose_todo_updates：提出已有待办的编辑草案。格式：")
+        append("\n```protato_tool")
+        append("\n{\"tool\":\"propose_todo_updates\",\"edits\":[{\"id\":\"todoId\",\"title\":\"新标题\",\"dueDate\":\"yyyy-MM-dd\",\"tags\":[\"标签\"],\"plannedPomodoros\":1,\"completed\":false}]}")
+        append("\n```")
+        append("\n同一次回复最多调用一次工具，todos/edits 最多 6 个；工具块之外可以用一句自然语言说明等待用户确认。")
+        append(" 不要把本轮对话中已经确认添加、已经拒绝、TodoList 已存在或无需变化的待办再次放入工具调用。")
         append(" 回答要短、具体、可执行。")
         append("\n\n当前上下文：\n")
         append(state.toUnifiedAgentContext(nickname))
@@ -5180,7 +5403,8 @@ private suspend fun requestUnifiedAgentChat(
 
 private data class AgentToolResponse(
     val visibleReply: String,
-    val todoDrafts: List<TodoDraft>
+    val todoDrafts: List<TodoDraft>,
+    val todoEdits: List<TodoEditDraft>
 )
 
 private fun parseAgentToolResponse(rawReply: String): AgentToolResponse {
@@ -5193,16 +5417,25 @@ private fun parseAgentToolResponse(rawReply: String): AgentToolResponse {
         .toList()
         .distinctBy { it.title.lowercase(Locale.getDefault()) }
         .take(6)
+    val todoEdits = toolBlockRegex.findAll(rawReply)
+        .flatMap { match -> parseAgentTodoEditToolCall(match.groupValues[1]).asSequence() }
+        .toList()
+        .distinctBy(::todoEditDraftKey)
+        .take(6)
     val visibleReply = rawReply.replace(toolBlockRegex, "")
         .trim()
         .ifBlank {
-            if (todoDrafts.isNotEmpty()) {
-                "我整理了 ${todoDrafts.size} 个待办草案，请确认是否添加。"
+            if (todoDrafts.isNotEmpty() || todoEdits.isNotEmpty()) {
+                "我整理了待办草案，请确认是否应用。"
             } else {
                 rawReply.trim()
             }
         }
-    return AgentToolResponse(visibleReply = visibleReply, todoDrafts = todoDrafts)
+    return AgentToolResponse(
+        visibleReply = visibleReply,
+        todoDrafts = todoDrafts,
+        todoEdits = todoEdits
+    )
 }
 
 private fun parseAgentTodoToolCall(rawJson: String): List<TodoDraft> {
@@ -5243,6 +5476,48 @@ private fun parseAgentTodoToolCall(rawJson: String): List<TodoDraft> {
     }.getOrElse { emptyList() }
 }
 
+private fun parseAgentTodoEditToolCall(rawJson: String): List<TodoEditDraft> {
+    return runCatching {
+        val root = JSONObject(rawJson.trim())
+        if (!root.optString("tool").equals("propose_todo_updates", ignoreCase = true)) {
+            return@runCatching emptyList()
+        }
+        val edits = root.optJSONArray("edits") ?: return@runCatching emptyList()
+        buildList {
+            for (index in 0 until edits.length()) {
+                val item = edits.optJSONObject(index) ?: continue
+                val id = item.optString("id").trim()
+                if (id.isBlank()) continue
+                val title = item.optionalNonBlankString("title")?.take(40)
+                val dueDate = item.optionalNonBlankString("dueDate")?.let(::normalizedTodoDate)
+                val tags = item.optJSONArray("tags")?.toStringList()
+                    ?.flatMap(::parseTodoTags)
+                    ?.distinctBy { it.lowercase(Locale.getDefault()) }
+                    ?.take(5)
+                val plannedPomodoros = if (item.has("plannedPomodoros")) {
+                    item.optInt("plannedPomodoros", 1).coerceIn(1, 24)
+                } else {
+                    null
+                }
+                val completed = if (item.has("completed")) item.optBoolean("completed") else null
+                if (title == null && dueDate == null && tags == null && plannedPomodoros == null && completed == null) {
+                    continue
+                }
+                add(
+                    TodoEditDraft(
+                        id = id,
+                        title = title,
+                        dueDate = dueDate,
+                        tags = tags,
+                        plannedPomodoros = plannedPomodoros,
+                        completed = completed
+                    )
+                )
+            }
+        }
+    }.getOrElse { emptyList() }
+}
+
 private fun JSONArray.toStringList(): List<String> {
     return buildList {
         for (index in 0 until length()) {
@@ -5250,6 +5525,11 @@ private fun JSONArray.toStringList(): List<String> {
             if (value.isNotBlank()) add(value)
         }
     }
+}
+
+private fun JSONObject.optionalNonBlankString(name: String): String? {
+    if (!has(name) || isNull(name)) return null
+    return optString(name).trim().takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
 }
 
 private fun localUnifiedAgentReply(
@@ -5297,7 +5577,7 @@ private fun AppState.toUnifiedAgentContext(nickname: String): String {
         .sortedByDescending { it.endedAt }
         .take(120)
     val todoText = todayTodos.take(12).joinToString("\n") { todo ->
-        "- [${if (todo.completed) "x" else " "}] ${todo.title}（${todo.plannedPomodoros} 个番茄，标签：${todo.tags.joinToString("、").ifBlank { "无" }}）"
+        "- id=${todo.id} [${if (todo.completed) "x" else " "}] ${todo.title}（日期：${todo.dueDate ?: "无"}，${todo.plannedPomodoros} 个番茄，标签：${todo.tags.joinToString("、").ifBlank { "无" }}）"
     }.ifBlank { "无" }
     val recordText = todayRecords.takeLast(8).joinToString("\n") { record ->
         "- ${formatClockTime(record.endedAt)} ${record.todoTitle}，${record.focusMinutes} 分钟"
@@ -5306,7 +5586,7 @@ private fun AppState.toUnifiedAgentContext(nickname: String): String {
     val historyTodoText = historicalTodos.joinToString("\n") { todo ->
         val status = if (todo.completed) "已完成" else "未完成"
         val date = todo.dueDate ?: dayKey(todo.createdAt)
-        "- $date [$status] ${todo.title}（${todo.tags.joinToString("、").ifBlank { "无标签" }}，${todo.plannedPomodoros} 个番茄）"
+        "- id=${todo.id} $date [$status] ${todo.title}（${todo.tags.joinToString("、").ifBlank { "无标签" }}，${todo.plannedPomodoros} 个番茄）"
     }.ifBlank { "无" }
     val historyRecordText = historicalRecords.joinToString("\n") { record ->
         "- ${dayKey(record.endedAt)} ${record.todoTitle}，${record.focusMinutes} 分钟"

@@ -1,11 +1,13 @@
 # Gradle
 .gradle/
+.gradle-home/
 build/
 app/build/
 
 # Local configuration
 local.properties
 .android-sdk/
+.omc/
 
 # Android Studio / IntelliJ
 .idea/
