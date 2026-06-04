@@ -36,6 +36,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -99,6 +100,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -506,25 +508,25 @@ private fun AgentScreen(
 ) {
     val scope = rememberCoroutineScope()
     val nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME }
-    val todayKey = dayKey(System.currentTimeMillis())
-    val todayTodos = remember(appState.todos, todayKey) {
-        appState.todos.filter { it.dueDate == todayKey && !it.completed }
-    }
-    val todayRecords = remember(appState.records, todayKey) {
-        appState.records.filter { dayKey(it.endedAt) == todayKey }
-    }
     val agent = selectUnifiedAgent(appState.agents)
     val provider = agent?.providerId?.let { providerId ->
         appState.llmProviders.firstOrNull { it.id == providerId }
     } ?: appState.llmProviders.firstOrNull { it.isConfiguredForChat() }
     var input by rememberSaveable { mutableStateOf("") }
     var loading by rememberSaveable { mutableStateOf(false) }
-    var syncing by rememberSaveable { mutableStateOf(false) }
     var errorText by rememberSaveable { mutableStateOf<String?>(null) }
-    var syncStatus by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingTodos by remember { mutableStateOf<List<TodoDraft>>(emptyList()) }
-    var viewingSummary by remember { mutableStateOf<DailySummary?>(null) }
-    var planningMode by rememberSaveable { mutableStateOf(false) }
+    var handledTodoDraftKeys by rememberSaveable { mutableStateOf(emptyList<String>()) }
+    val listState = rememberLazyListState()
+    val canStartNewConversation = !loading &&
+        (appState.agentMessages.isNotEmpty() || pendingTodos.isNotEmpty() || errorText != null)
+
+    LaunchedEffect(appState.agentMessages.size, loading) {
+        val itemCount = appState.agentMessages.size + if (loading) 1 else 0
+        if (itemCount > 0) {
+            listState.animateScrollToItem(itemCount - 1)
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -532,72 +534,11 @@ private fun AgentScreen(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Header(title = "对话", subtitle = "把行程、待办、专注和总结放进同一个窗口")
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("计划模式", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-            Switch(checked = planningMode, onCheckedChange = { planningMode = it })
-        }
-        AgentDayCard(
-            todayKey = todayKey,
-            todos = todayTodos,
-            records = todayRecords,
-            syncing = syncing,
-            syncEnabled = appState.webDevSync.enabled && appState.webDevSync.endpoint.isNotBlank(),
-            onSummary = {
-                scope.launch {
-                    loading = true
-                    errorText = null
-                    val summary = runCatching {
-                        generateDailySummary(
-                            dayKey = todayKey,
-                            records = todayRecords,
-                            templates = appState.templates,
-                            providers = appState.llmProviders,
-                            agents = appState.agents,
-                            nickname = nickname
-                        )
-                    }.getOrElse { error ->
-                        errorText = error.message ?: "生成总结失败"
-                        localDailySummary(todayKey, todayRecords, nickname)
-                    }
-                    val nextState = appState.copy(
-                        dailySummaries = listOf(summary) + appState.dailySummaries.filterNot {
-                            it.dayKey == summary.dayKey
-                        },
-                        agentMessages = appState.agentMessages.appendAgentMessage(
-                            role = "assistant",
-                            content = "我已经生成了 ${formatDayLabel(todayKey)} 的总结，可以在记录页查看。"
-                        )
-                    )
-                    onStateChange(nextState)
-                    viewingSummary = summary
-                    loading = false
-                }
-            },
-            onSync = {
-                scope.launch {
-                    syncing = true
-                    syncStatus = null
-                    errorText = null
-                    syncStatus = runCatching {
-                        syncWebDevState(appState)
-                        "已同步到 WebDev 接口"
-                    }.getOrElse { error ->
-                        error.message ?: "同步失败"
-                    }
-                    syncing = false
-                }
-            }
-        )
-
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
+            state = listState,
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(appState.agentMessages, key = { it.id }) { message ->
@@ -605,7 +546,7 @@ private fun AgentScreen(
             }
             if (loading) {
                 item {
-                    Text("Agent 正在整理...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ChatBubble(LlmChatMessage("assistant", "正在整理..."))
                 }
             }
         }
@@ -615,6 +556,9 @@ private fun AgentScreen(
                 drafts = pendingTodos,
                 onAdd = {
                     val newTodos = pendingTodos.map { it.toTodoItem() }
+                    handledTodoDraftKeys = (handledTodoDraftKeys + pendingTodos.map(::todoDraftKey))
+                        .distinct()
+                        .takeLast(120)
                     onStateChange(
                         appState.copy(
                             todos = newTodos + appState.todos,
@@ -626,12 +570,24 @@ private fun AgentScreen(
                     )
                     pendingTodos = emptyList()
                 },
-                onDismiss = { pendingTodos = emptyList() }
+                onDismiss = {
+                    handledTodoDraftKeys = (handledTodoDraftKeys + pendingTodos.map(::todoDraftKey))
+                        .distinct()
+                        .takeLast(120)
+                    onStateChange(
+                        appState.copy(
+                            agentMessages = appState.agentMessages.appendAgentMessage(
+                                role = "assistant",
+                                content = "已拒绝本次待办草案。"
+                            )
+                        )
+                    )
+                    pendingTodos = emptyList()
+                }
             )
         }
 
         errorText?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        syncStatus?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
 
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -646,13 +602,24 @@ private fun AgentScreen(
                 minLines = 1,
                 maxLines = 4
             )
+            IconButton(
+                enabled = canStartNewConversation,
+                onClick = {
+                    input = ""
+                    pendingTodos = emptyList()
+                    handledTodoDraftKeys = emptyList()
+                    errorText = null
+                    onStateChange(appState.copy(agentMessages = emptyList()))
+                }
+            ) {
+                Icon(Icons.Outlined.RestartAlt, contentDescription = "新开对话")
+            }
             FilledIconButton(
                 enabled = input.isNotBlank() && !loading,
                 onClick = {
                     val text = input.trim()
                     input = ""
                     errorText = null
-                    syncStatus = null
                     val userState = appState.copy(
                         agentMessages = appState.agentMessages.appendAgentMessage("user", text)
                     )
@@ -660,7 +627,8 @@ private fun AgentScreen(
                     pendingTodos = emptyList()
                     scope.launch {
                         loading = true
-                        val todoDrafts = if (planningMode || text.looksLikeTodoPlanningRequest()) {
+                        val shouldPlan = text.looksLikeTodoPlanningRequest()
+                        val todoDrafts = if (shouldPlan) {
                             runCatching {
                                 if (agent != null && provider != null && provider.isConfiguredForChat()) {
                                     generateAgentTodoDrafts(
@@ -669,7 +637,7 @@ private fun AgentScreen(
                                         agent = agent,
                                         provider = provider,
                                         nickname = nickname,
-                                        planningMode = planningMode
+                                        planningMode = true
                                     )
                                 } else {
                                     localPlanTodoDrafts(text)
@@ -680,7 +648,7 @@ private fun AgentScreen(
                         } else {
                             emptyList()
                         }
-                        val reply = runCatching {
+                        val rawReply = runCatching {
                             if (agent != null && provider != null && provider.isConfiguredForChat()) {
                                 requestUnifiedAgentChat(
                                     state = userState,
@@ -695,6 +663,21 @@ private fun AgentScreen(
                             errorText = error.message ?: "发送失败"
                             localUnifiedAgentReply(text, userState, nickname)
                         }
+                        val toolResponse = parseAgentToolResponse(rawReply)
+                        val finalTodoDrafts = toolResponse.todoDrafts
+                            .ifEmpty { todoDrafts }
+                            .filterNewTodoDrafts(
+                                existingTodos = userState.todos,
+                                handledKeys = handledTodoDraftKeys.toSet()
+                            )
+                        val reply = if (
+                            (toolResponse.todoDrafts.isNotEmpty() || todoDrafts.isNotEmpty()) &&
+                            finalTodoDrafts.isEmpty()
+                        ) {
+                            "这些待办草案已经确认、拒绝或存在于 TodoList，我不会重复提交。"
+                        } else {
+                            toolResponse.visibleReply
+                        }
                         onStateChange(
                             userState.copy(
                                 agentMessages = userState.agentMessages.appendAgentMessage(
@@ -703,7 +686,7 @@ private fun AgentScreen(
                                 )
                             )
                         )
-                        pendingTodos = todoDrafts
+                        pendingTodos = finalTodoDrafts
                         loading = false
                     }
                 }
@@ -711,10 +694,6 @@ private fun AgentScreen(
                 Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "发送")
             }
         }
-    }
-
-    viewingSummary?.let { summary ->
-        DailySummaryDialog(summary = summary, onDismiss = { viewingSummary = null })
     }
 }
 
@@ -790,9 +769,9 @@ private fun AgentTodoDraftCard(
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("待办草案", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                Text("待办工具请求", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                 TextButton(onClick = onDismiss) {
-                    Text("忽略")
+                    Text("拒绝")
                 }
                 TextButton(onClick = onAdd) {
                     Text("确认添加")
@@ -922,6 +901,7 @@ private fun TimerCard(
     var choosingTodo by rememberSaveable { mutableStateOf(false) }
     var choosingTemplate by rememberSaveable { mutableStateOf(false) }
     val durationMinutes = totalSeconds / 60
+    val showFocusControls = mode == TimerMode.Focus
 
     ElevatedCard(
         modifier = modifier,
@@ -975,20 +955,29 @@ private fun TimerCard(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                TextButton(
-                                    onClick = { choosingTemplate = true },
-                                    modifier = Modifier.widthIn(max = ringSize * 0.78f)
-                                ) {
-                                    Icon(
-                                        Icons.AutoMirrored.Outlined.ViewList,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-                                    )
-                                    Spacer(Modifier.width(6.dp))
+                                if (showFocusControls) {
+                                    TextButton(
+                                        onClick = { choosingTemplate = true },
+                                        modifier = Modifier.widthIn(max = ringSize * 0.78f)
+                                    ) {
+                                        Icon(
+                                            Icons.AutoMirrored.Outlined.ViewList,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            text = "模板：${selectedTemplate.name}",
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                } else {
                                     Text(
-                                        text = "模板：${selectedTemplate.name}",
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        text = "休息",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontWeight = FontWeight.SemiBold
                                     )
                                 }
                                 Text(
@@ -999,16 +988,18 @@ private fun TimerCard(
                                         editingDuration = true
                                     }
                                 )
-                                Text(
-                                    text = selectedTodoTitle ?: "选择一个待办开始",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.clickable(enabled = !isRunning) {
-                                        choosingTodo = true
-                                    },
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                if (showFocusControls) {
+                                    Text(
+                                        text = selectedTodoTitle ?: "选择一个待办开始",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.clickable(enabled = !isRunning) {
+                                            choosingTodo = true
+                                        },
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                     }
@@ -1056,7 +1047,7 @@ private fun TimerCard(
         )
     }
 
-    if (choosingTodo) {
+    if (choosingTodo && showFocusControls) {
         TodoSelectDialog(
             todos = todos.filterNot { it.completed },
             selectedTodoId = selectedTodoId,
@@ -1068,7 +1059,7 @@ private fun TimerCard(
         )
     }
 
-    if (choosingTemplate) {
+    if (choosingTemplate && showFocusControls) {
         TemplateSelectDialog(
             templates = templates,
             selectedTemplateId = selectedTemplate.id,
@@ -1283,6 +1274,7 @@ private fun TodoScreen(
     var showingTagFilter by rememberSaveable { mutableStateOf(false) }
     var selectedTodoIds by rememberSaveable { mutableStateOf(setOf<String>()) }
     var selectedTag by rememberSaveable { mutableStateOf<String?>(null) }
+    var showIncompleteTodos by rememberSaveable { mutableStateOf(true) }
     var showCompletedTodos by rememberSaveable { mutableStateOf(false) }
     val selecting = selectedTodoIds.isNotEmpty()
     val todayKey = dayKey(System.currentTimeMillis())
@@ -1396,29 +1388,34 @@ private fun TodoScreen(
                 item {
                     TodoSectionHeader(
                         title = "未完成",
-                        count = visibleIncompleteTodos.size
+                        count = visibleIncompleteTodos.size,
+                        expanded = showIncompleteTodos,
+                        onToggle = { showIncompleteTodos = !showIncompleteTodos }
                     )
                 }
             }
-            items(visibleIncompleteTodos, key = { it.id }) { todo ->
-                TodoRow(
-                    todo = todo,
-                    selected = todo.id in selectedTodoIds,
-                    selecting = selecting,
-                    onToggle = { onToggle(todo) },
-                    onEdit = { editingTodo = todo },
-                    onDelete = { onDelete(todo) },
-                    onToggleSelected = {
-                        selectedTodoIds = selectedTodoIds.toggle(todo.id)
-                    },
-                    onLongPress = {
-                        selectedTodoIds = selectedTodoIds + todo.id
-                    }
-                )
+            if (showIncompleteTodos) {
+                items(visibleIncompleteTodos, key = { it.id }) { todo ->
+                    TodoRow(
+                        todo = todo,
+                        selected = todo.id in selectedTodoIds,
+                        selecting = selecting,
+                        onToggle = { onToggle(todo) },
+                        onEdit = { editingTodo = todo },
+                        onDelete = { onDelete(todo) },
+                        onToggleSelected = {
+                            selectedTodoIds = selectedTodoIds.toggle(todo.id)
+                        },
+                        onLongPress = {
+                            selectedTodoIds = selectedTodoIds + todo.id
+                        }
+                    )
+                }
             }
             if (visibleCompletedTodos.isNotEmpty()) {
                 item {
-                    TodoCompletedSectionHeader(
+                    TodoSectionHeader(
+                        title = "已完成",
                         count = visibleCompletedTodos.size,
                         expanded = showCompletedTodos,
                         onToggle = { showCompletedTodos = !showCompletedTodos }
@@ -1910,23 +1907,6 @@ private fun TodoTagFilterDialog(
 @Composable
 private fun TodoSectionHeader(
     title: String,
-    count: Int
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Text("$title · $count", fontWeight = FontWeight.SemiBold)
-        HorizontalDivider(
-            modifier = Modifier.weight(1f),
-            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
-        )
-    }
-}
-
-@Composable
-private fun TodoCompletedSectionHeader(
     count: Int,
     expanded: Boolean,
     onToggle: () -> Unit
@@ -1942,7 +1922,7 @@ private fun TodoCompletedSectionHeader(
             modifier = Modifier.width(44.dp),
             color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)
         )
-        Text("已完成 · $count", fontWeight = FontWeight.SemiBold)
+        Text("$title · $count", fontWeight = FontWeight.SemiBold)
         Icon(
             if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
             contentDescription = null,
@@ -2036,7 +2016,7 @@ private fun TodoRow(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
-                    TodoMetadataStrip(todo = todo)
+                    TodoMetadataStrip(todo = todo, includeTags = !expanded)
                     if (expanded) {
                         TodoExpandedDetails(todo = todo)
                     }
@@ -2047,7 +2027,10 @@ private fun TodoRow(
 }
 
 @Composable
-private fun TodoMetadataStrip(todo: TodoItem) {
+private fun TodoMetadataStrip(
+    todo: TodoItem,
+    includeTags: Boolean = true
+) {
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -2055,6 +2038,11 @@ private fun TodoMetadataStrip(todo: TodoItem) {
         item { TodoPomodoroChip(todo.plannedPomodoros) }
         todo.dueDate?.let { dueDate ->
             item { TodoDateChip(dueDate) }
+        }
+        if (includeTags) {
+            items(todo.tags, key = { it }) { tag ->
+                TodoTagChip(tag)
+            }
         }
     }
 }
@@ -3179,9 +3167,17 @@ private fun TimelineRecordItem(
 }
 
 @Composable
-private fun MarkdownText(content: String) {
+private fun MarkdownText(
+    content: String,
+    modifier: Modifier = Modifier,
+    contentColor: Color = LocalContentColor.current,
+    accentColor: Color = MaterialTheme.colorScheme.primary
+) {
     val lines = content.lines()
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
         lines.forEach { rawLine ->
             val line = rawLine.trim()
             when {
@@ -3190,29 +3186,30 @@ private fun MarkdownText(content: String) {
                 line.startsWith("### ") -> MarkdownLine(
                     text = line.removePrefix("### "),
                     weight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = accentColor
                 )
                 line.startsWith("## ") -> MarkdownLine(
                     text = line.removePrefix("## "),
                     style = MaterialTheme.typography.titleMedium,
                     weight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = accentColor
                 )
                 line.startsWith("# ") -> MarkdownLine(
                     text = line.removePrefix("# "),
                     style = MaterialTheme.typography.titleLarge,
                     weight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.primary
+                    color = accentColor
                 )
                 line.startsWith(">") -> Surface(
                     modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.surfaceVariant,
+                    contentColor = contentColor,
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     MarkdownLine(
                         text = line.removePrefix(">").trim(),
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = contentColor
                     )
                 }
                 line.isMarkdownBullet() -> Row(
@@ -3220,8 +3217,12 @@ private fun MarkdownText(content: String) {
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.Top
                 ) {
-                    Text("•", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
-                    MarkdownLine(text = line.removeMarkdownBullet(), modifier = Modifier.weight(1f))
+                    Text("•", color = accentColor, fontWeight = FontWeight.Bold)
+                    MarkdownLine(
+                        text = line.removeMarkdownBullet(),
+                        modifier = Modifier.weight(1f),
+                        color = contentColor
+                    )
                 }
                 line.isMarkdownNumberedItem() -> {
                     val number = line.substringBefore(".")
@@ -3230,14 +3231,15 @@ private fun MarkdownText(content: String) {
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.Top
                     ) {
-                        Text("$number.", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                        Text("$number.", color = accentColor, fontWeight = FontWeight.Bold)
                         MarkdownLine(
                             text = line.substringAfter(".").trim(),
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            color = contentColor
                         )
                     }
                 }
-                else -> MarkdownLine(text = line)
+                else -> MarkdownLine(text = line, color = contentColor)
             }
         }
     }
@@ -3431,6 +3433,8 @@ private fun WebDevSyncSettingsCard(
 ) {
     val tokenMask = "***"
     val tokenDisplay = if (settings.authToken.isBlank()) "" else tokenMask
+    val providerPresets = listOf("webdev", "jianguoyun")
+    val presetEndpoints = providerPresets.map { it.syncEndpointPreset() }
     ElevatedCard(
         shape = RoundedCornerShape(8.dp),
         modifier = Modifier.fillMaxWidth(),
@@ -3473,13 +3477,13 @@ private fun WebDevSyncSettingsCard(
                 singleLine = true
             )
             SingleChoiceSegmentedButtonRow {
-                listOf("webdev", "aliyun", "baidu").forEachIndexed { index, provider ->
+                providerPresets.forEachIndexed { index, provider ->
                     SegmentedButton(
                         selected = settings.cloudProvider == provider,
                         onClick = {
                             val presetEndpoint = provider.syncEndpointPreset()
                             val shouldReplaceEndpoint = settings.endpoint.isBlank() ||
-                                settings.endpoint in listOf("webdev", "aliyun", "baidu").map { it.syncEndpointPreset() }
+                                settings.endpoint in presetEndpoints
                             onChange(
                                 settings.copy(
                                     cloudProvider = provider,
@@ -3487,7 +3491,7 @@ private fun WebDevSyncSettingsCard(
                                 )
                             )
                         },
-                        shape = SegmentedButtonDefaults.itemShape(index, 3),
+                        shape = SegmentedButtonDefaults.itemShape(index, providerPresets.size),
                         label = { Text(provider.cloudProviderLabel()) }
                     )
                 }
@@ -4410,16 +4414,43 @@ private fun RecordChatDialog(
 @Composable
 private fun ChatBubble(message: LlmChatMessage) {
     val isUser = message.role == "user"
-    Surface(
+    val bubbleColor = if (isUser) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant
+    }
+    val bubbleContentColor = if (isUser) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val accentColor = if (isUser) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.primary
+    }
+    Row(
         modifier = Modifier.fillMaxWidth(),
-        color = if (isUser) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-        contentColor = if (isUser) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
-        shape = RoundedCornerShape(8.dp)
+        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
     ) {
-        Text(
-            text = message.content,
-            modifier = Modifier.padding(10.dp)
-        )
+        Surface(
+            modifier = Modifier.widthIn(max = 520.dp),
+            color = bubbleColor,
+            contentColor = bubbleContentColor,
+            shape = RoundedCornerShape(
+                topStart = 14.dp,
+                topEnd = 14.dp,
+                bottomEnd = if (isUser) 4.dp else 14.dp,
+                bottomStart = if (isUser) 14.dp else 4.dp
+            )
+        ) {
+            MarkdownText(
+                content = message.content,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                contentColor = bubbleContentColor,
+                accentColor = accentColor
+            )
+        }
     }
 }
 
@@ -4647,6 +4678,11 @@ private fun RecordEditDialog(
     val missingRequired = hasMissingRequiredAnswers(editableTemplate, answers)
     val selectedTodo = todos.firstOrNull { it.id == selectedTodoId }
     val originalTodoStillSelected = selectedTodoId == record.todoId && selectedTodoId != null
+    val recordDayKey = dayKey(record.endedAt)
+    val recordDayTodos = remember(todos, recordDayKey) {
+        todos.filter { it.dueDate == recordDayKey }
+    }
+    val selectedTodoShownInDayList = recordDayTodos.any { it.id == selectedTodoId }
     val updatedTodoTitle = when {
         selectedTodo != null -> selectedTodo.title
         originalTodoStillSelected -> record.todoTitle
@@ -4689,9 +4725,12 @@ private fun RecordEditDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 RecordTodoSelector(
-                    todos = todos,
+                    todos = recordDayTodos,
                     selectedTodoId = selectedTodoId,
-                    fallbackTodoTitle = record.todoTitle.takeIf { originalTodoStillSelected && selectedTodo == null },
+                    fallbackTodoTitle = updatedTodoTitle.takeIf {
+                        originalTodoStillSelected && !selectedTodoShownInDayList
+                    },
+                    dayLabel = formatDayLabel(recordDayKey),
                     onSelected = { selectedTodoId = it }
                 )
                 HorizontalDivider()
@@ -4712,31 +4751,91 @@ private fun RecordTodoSelector(
     todos: List<TodoItem>,
     selectedTodoId: String?,
     fallbackTodoTitle: String?,
+    dayLabel: String,
     onSelected: (String?) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("绑定任务", fontWeight = FontWeight.SemiBold)
+        Text("绑定任务 · $dayLabel", fontWeight = FontWeight.SemiBold)
         if (todos.isEmpty() && fallbackTodoTitle == null) {
-            Text("还没有可绑定的待办。", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("这一天还没有可绑定的待办。", color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
-            FilterChip(
+            RecordTodoListRow(
                 selected = selectedTodoId == null,
                 onClick = { onSelected(null) },
-                label = { Text("不绑定") }
+                title = "不绑定",
+                tags = emptyList()
             )
             if (fallbackTodoTitle != null) {
-                FilterChip(
+                RecordTodoListRow(
                     selected = true,
                     onClick = { },
-                    label = { Text(fallbackTodoTitle) }
+                    title = fallbackTodoTitle,
+                    tags = emptyList()
                 )
             }
             todos.forEach { todo ->
-                FilterChip(
+                RecordTodoListRow(
                     selected = selectedTodoId == todo.id,
                     onClick = { onSelected(todo.id) },
-                    label = { TodoChoiceLabel(todo) }
+                    title = todo.title,
+                    tags = todo.tags,
+                    completed = todo.completed
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecordTodoListRow(
+    selected: Boolean,
+    onClick: () -> Unit,
+    title: String,
+    tags: List<String>,
+    completed: Boolean = false
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        color = if (selected) {
+            MaterialTheme.colorScheme.secondaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+        },
+        contentColor = if (selected) {
+            MaterialTheme.colorScheme.onSecondaryContainer
+        } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+        },
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            RadioButton(selected = selected, onClick = onClick)
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    title,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textDecoration = if (completed) TextDecoration.LineThrough else TextDecoration.None
+                )
+                if (tags.isNotEmpty()) {
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        items(tags, key = { it }) { tag ->
+                            TodoTagChip(tag)
+                        }
+                    }
+                }
             }
         }
     }
@@ -4845,6 +4944,29 @@ private data class TodoDraft(
             tags = tags,
             plannedPomodoros = plannedPomodoros.coerceIn(1, 24)
         )
+    }
+}
+
+private fun todoDraftKey(draft: TodoDraft): String {
+    return todoIdentityKey(draft.title, draft.dueDate)
+}
+
+private fun todoItemKey(todo: TodoItem): String {
+    return todoIdentityKey(todo.title, todo.dueDate)
+}
+
+private fun todoIdentityKey(title: String, dueDate: String?): String {
+    return "${title.trim().lowercase(Locale.getDefault())}|${dueDate.orEmpty()}"
+}
+
+private fun List<TodoDraft>.filterNewTodoDrafts(
+    existingTodos: List<TodoItem>,
+    handledKeys: Set<String>
+): List<TodoDraft> {
+    val existingKeys = existingTodos.map(::todoItemKey).toSet()
+    return filter { draft ->
+        val key = todoDraftKey(draft)
+        key !in handledKeys && key !in existingKeys
     }
 }
 
@@ -4976,14 +5098,12 @@ private fun String.looksLikeTodoPlanningRequest(): Boolean {
 }
 
 private fun String.cloudProviderLabel(): String = when (this) {
-    "aliyun" -> "阿里云"
-    "baidu" -> "百度云"
+    "jianguoyun" -> "坚果云"
     else -> "WebDev"
 }
 
 private fun String.syncEndpointPreset(): String = when (this) {
-    "aliyun" -> "https://openapi.aliyundrive.com"
-    "baidu" -> "https://pan.baidu.com/rest/2.0/xpan"
+    "jianguoyun" -> "https://dav.jianguoyun.com/dav/"
     else -> ""
 }
 
@@ -5038,7 +5158,15 @@ private suspend fun requestUnifiedAgentChat(
         appendAgentStylePrompt()
         append("\n你现在是 Protato 唯一的统一 Agent。你需要通过连续对话帮助用户确定一天行程、拆解待办、选择下一轮番茄对象，并在结束时总结。")
         append(" 你可以读取待办、今日番茄记录、复盘模板和长期记忆。")
-        append(" 如果要新增待办，只输出草案建议，不要声称已经添加；用户必须点击确认后应用才会写入 TodoList。")
+        append(" 如果要新增待办，必须调用工具 propose_todos；用户确认后才会写入 TodoList，不要声称已经添加。")
+        append("\n\n可用工具：")
+        append("\npropose_todos：在对话中提出待办草案，由 App 展示确认/拒绝卡片。")
+        append("\n调用格式必须放在独立 Markdown 代码块中：")
+        append("\n```protato_tool")
+        append("\n{\"tool\":\"propose_todos\",\"todos\":[{\"title\":\"明确可执行的待办\",\"dueDate\":\"yyyy-MM-dd 或 null\",\"tags\":[\"标签\"],\"plannedPomodoros\":1}]}")
+        append("\n```")
+        append("\n同一次回复最多调用一次工具，todos 最多 6 个；工具块之外可以用一句自然语言说明等待用户确认。")
+        append(" 不要把本轮对话中已经确认添加、已经拒绝、或 TodoList 已存在的待办再次放入工具调用。")
         append(" 回答要短、具体、可执行。")
         append("\n\n当前上下文：\n")
         append(state.toUnifiedAgentContext(nickname))
@@ -5048,6 +5176,80 @@ private suspend fun requestUnifiedAgentChat(
         messages = listOf(LlmChatMessage("system", systemPrompt)) +
             state.agentMessages.takeLast(16).map { LlmChatMessage(it.role, it.content) }
     )
+}
+
+private data class AgentToolResponse(
+    val visibleReply: String,
+    val todoDrafts: List<TodoDraft>
+)
+
+private fun parseAgentToolResponse(rawReply: String): AgentToolResponse {
+    val toolBlockRegex = Regex(
+        pattern = "```\\s*protato_tool\\s*\\n(.*?)\\n```",
+        options = setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
+    )
+    val todoDrafts = toolBlockRegex.findAll(rawReply)
+        .flatMap { match -> parseAgentTodoToolCall(match.groupValues[1]).asSequence() }
+        .toList()
+        .distinctBy { it.title.lowercase(Locale.getDefault()) }
+        .take(6)
+    val visibleReply = rawReply.replace(toolBlockRegex, "")
+        .trim()
+        .ifBlank {
+            if (todoDrafts.isNotEmpty()) {
+                "我整理了 ${todoDrafts.size} 个待办草案，请确认是否添加。"
+            } else {
+                rawReply.trim()
+            }
+        }
+    return AgentToolResponse(visibleReply = visibleReply, todoDrafts = todoDrafts)
+}
+
+private fun parseAgentTodoToolCall(rawJson: String): List<TodoDraft> {
+    return runCatching {
+        val root = JSONObject(rawJson.trim())
+        if (!root.optString("tool").equals("propose_todos", ignoreCase = true)) {
+            return@runCatching emptyList()
+        }
+        val todos = root.optJSONArray("todos") ?: return@runCatching emptyList()
+        buildList {
+            for (index in 0 until todos.length()) {
+                val item = todos.optJSONObject(index) ?: continue
+                val title = item.optString("title")
+                    .trim()
+                    .take(40)
+                if (title.isBlank()) continue
+                val dueDate = normalizedTodoDate(item.optString("dueDate"))
+                    ?: normalizedTodoDate(item.optString("date"))
+                val plannedPomodoros = item.optInt(
+                    "plannedPomodoros",
+                    item.optInt("pomodoros", 1)
+                )
+                val tags = item.optJSONArray("tags")?.toStringList()
+                    ?.flatMap(::parseTodoTags)
+                    ?.distinctBy { it.lowercase(Locale.getDefault()) }
+                    ?.take(5)
+                    .orEmpty()
+                add(
+                    TodoDraft(
+                        title = title,
+                        dueDate = dueDate,
+                        tags = tags.ifEmpty { inferTodoTags(title) },
+                        plannedPomodoros = plannedPomodoros.coerceIn(1, 24)
+                    )
+                )
+            }
+        }
+    }.getOrElse { emptyList() }
+}
+
+private fun JSONArray.toStringList(): List<String> {
+    return buildList {
+        for (index in 0 until length()) {
+            val value = optString(index).trim()
+            if (value.isNotBlank()) add(value)
+        }
+    }
 }
 
 private fun localUnifiedAgentReply(
@@ -5864,7 +6066,7 @@ private fun completeSession(state: AppState): AppState {
             templateId = session.templateId
         )
     } else {
-        state.pendingRecord
+        null
     }
     return state.copy(activeSession = null, pendingRecord = pendingRecord)
 }

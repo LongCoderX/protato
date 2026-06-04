@@ -248,11 +248,18 @@ private fun JSONObject.toAgentDataPermissions(): AgentDataPermissions {
 }
 
 private fun JSONObject.toWebDevSyncSettings(): WebDevSyncSettings {
+    val rawCloudProvider = optString("cloudProvider", "webdev").ifBlank { "webdev" }
+    val legacyPresetEndpoints = setOf(
+        "https://openapi.aliyundrive.com",
+        "https://pan.baidu.com/rest/2.0/xpan"
+    )
+    val endpoint = optString("endpoint")
+    val migratedFromRemovedPreset = rawCloudProvider in setOf("aliyun", "baidu")
     return WebDevSyncSettings(
         enabled = optBoolean("enabled"),
-        endpoint = optString("endpoint"),
+        endpoint = if (migratedFromRemovedPreset && endpoint in legacyPresetEndpoints) "" else endpoint,
         authToken = optString("authToken"),
-        cloudProvider = optString("cloudProvider", "webdev").ifBlank { "webdev" }
+        cloudProvider = if (migratedFromRemovedPreset) "webdev" else rawCloudProvider
     )
 }
 
