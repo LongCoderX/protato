@@ -151,7 +151,7 @@ data class AppState(
 )
 
 const val DEFAULT_NICKNAME = "专注者"
-const val DEFAULT_UNIFIED_AGENT_PROMPT = "请称呼我为「{nickname}」。你是 Protato 的统一日程 Agent，负责通过连续对话帮助我确定一天的行程、整理待办、陪我完成番茄专注，并在一天结束时给出温和、具体、可执行的总结。你可以基于待办、番茄记录、复盘模板和同步记忆提出建议；涉及新增或修改待办时，只给草案，必须等我确认后再落地。"
+const val DEFAULT_UNIFIED_AGENT_PROMPT = "请称呼我为「{nickname}」。你是 Protato 的对话助手，负责通过连续对话帮助我确定一天的行程、整理待办、拆分大型事件、陪我完成番茄专注，并在一天结束时给出温和、具体、可执行的总结。你可以基于近一年待办历史、番茄记录、复盘模板和同步记忆提出建议；涉及新增或修改待办时，只给草案，必须等我确认后再落地。"
 const val DEFAULT_ENCOURAGER_PROMPT = "请称呼我为「{nickname}」，用温和、具体、不油腻的方式鼓励我继续完成下一轮番茄。"
 const val DEFAULT_TODO_AGENT_PROMPT = "请称呼我为「{nickname}」，把我随口说出的计划整理成短小、明确、可执行的待办。"
 const val DEFAULT_TEMPLATE_AGENT_PROMPT = "请称呼我为「{nickname}」，根据我的复盘目标生成简洁、好填写的番茄记录模板。"
@@ -161,7 +161,7 @@ const val AGENT_STYLE_PROMPT = "允许在自然语言回复中使用少量贴切
 fun defaultLlmProviders(): List<LlmProviderSettings> {
     return listOf(
         LlmProviderSettings("provider-deepseek", "deepseek", "DeepSeek", endpoint = "https://api.deepseek.com"),
-        LlmProviderSettings("provider-minimax", "minimax", "MiniMax", endpoint = "https://api.minimax.io"),
+        LlmProviderSettings("provider-minimax", "minimax", "MiniMax", endpoint = "https://api.minimax.io/v1"),
         LlmProviderSettings("provider-qwen", "qwen", "Qwen", endpoint = "https://dashscope.aliyuncs.com/compatible-mode"),
         LlmProviderSettings("provider-openai", "openai", "OpenAI", endpoint = "https://api.openai.com"),
         LlmProviderSettings("provider-claude-code", "claude_code", "Claude Code"),
@@ -173,7 +173,7 @@ fun defaultAgents(): List<AgentSettings> {
     return listOf(
         AgentSettings(
             id = "agent-unified",
-            name = "日程 Agent",
+            name = "对话",
             prompt = DEFAULT_UNIFIED_AGENT_PROMPT,
             permissions = AgentDataPermissions(
                 dailyRecords = true,

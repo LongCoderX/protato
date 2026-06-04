@@ -192,12 +192,18 @@ private fun JSONArray.toLlmProviders(): List<LlmProviderSettings> = mapObjects {
 }.filter { it.id.isNotBlank() && it.name.isNotBlank() }
 
 private fun JSONObject.toLlmProviderSettings(): LlmProviderSettings {
+    val providerKey = optString("providerKey")
+    val endpoint = optString("endpoint")
     return LlmProviderSettings(
         id = optString("id"),
-        providerKey = optString("providerKey"),
+        providerKey = providerKey,
         name = optString("name"),
         modelName = optString("modelName"),
-        endpoint = optString("endpoint"),
+        endpoint = if (providerKey == "minimax" && endpoint.trimEnd('/') == "https://api.minimax.io") {
+            "https://api.minimax.io/v1"
+        } else {
+            endpoint
+        },
         apiKey = optString("apiKey")
     )
 }
@@ -387,6 +393,7 @@ private fun List<AgentSettings>.toUnifiedAgents(): List<AgentSettings> {
     if (unified != null) {
         return listOf(
             unified.copy(
+                name = "对话",
                 permissions = unified.permissions.copy(
                     dailyRecords = true,
                     todos = true,
@@ -406,7 +413,7 @@ private fun List<AgentSettings>.toUnifiedAgents(): List<AgentSettings> {
         AgentSettings(
             id = "agent-unified",
             enabled = base.enabled,
-            name = "日程 Agent",
+            name = "对话",
             providerId = providerId,
             prompt = if (DEFAULT_UNIFIED_AGENT_PROMPT in prompts) {
                 prompts

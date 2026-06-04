@@ -176,7 +176,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class MainTab(val label: String, val icon: ImageVector) {
-    Agent("Agent", Icons.AutoMirrored.Outlined.Chat),
+    Agent("对话", Icons.AutoMirrored.Outlined.Chat),
     Focus("专注", Icons.Outlined.Timer),
     Todo("待办", Icons.AutoMirrored.Outlined.List),
     Templates("模板", Icons.AutoMirrored.Outlined.ViewList),
@@ -515,6 +515,7 @@ private fun AgentScreen(
     var syncStatus by rememberSaveable { mutableStateOf<String?>(null) }
     var pendingTodos by remember { mutableStateOf<List<TodoDraft>>(emptyList()) }
     var viewingSummary by remember { mutableStateOf<DailySummary?>(null) }
+    var planningMode by rememberSaveable { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -522,7 +523,15 @@ private fun AgentScreen(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Header(title = "日程 Agent", subtitle = "把行程、待办、专注和总结放进同一个对话")
+        Header(title = "对话", subtitle = "把行程、待办、专注和总结放进同一个窗口")
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("计划模式", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+            Switch(checked = planningMode, onCheckedChange = { planningMode = it })
+        }
         AgentDayCard(
             todayKey = todayKey,
             todos = todayTodos,
@@ -624,7 +633,7 @@ private fun AgentScreen(
                 value = input,
                 onValueChange = { input = it.take(1200) },
                 modifier = Modifier.weight(1f),
-                label = { Text("和日程 Agent 说话") },
+                label = { Text("和对话助手说话") },
                 minLines = 1,
                 maxLines = 4
             )
@@ -642,7 +651,7 @@ private fun AgentScreen(
                     pendingTodos = emptyList()
                     scope.launch {
                         loading = true
-                        val todoDrafts = if (text.looksLikeTodoPlanningRequest()) {
+                        val todoDrafts = if (planningMode || text.looksLikeTodoPlanningRequest()) {
                             runCatching {
                                 if (agent != null && provider != null && provider.isConfiguredForChat()) {
                                     generateAgentTodoDrafts(
@@ -650,7 +659,8 @@ private fun AgentScreen(
                                         state = userState,
                                         agent = agent,
                                         provider = provider,
-                                        nickname = nickname
+                                        nickname = nickname,
+                                        planningMode = planningMode
                                     )
                                 } else {
                                     localPlanTodoDrafts(text)
@@ -1263,6 +1273,7 @@ private fun TodoScreen(
     var showingTagFilter by rememberSaveable { mutableStateOf(false) }
     var selectedTodoIds by rememberSaveable { mutableStateOf(setOf<String>()) }
     var selectedTag by rememberSaveable { mutableStateOf<String?>(null) }
+    var showCompletedTodos by rememberSaveable { mutableStateOf(false) }
     val selecting = selectedTodoIds.isNotEmpty()
     val todayKey = dayKey(System.currentTimeMillis())
     var selectedTodoDate by rememberSaveable { mutableStateOf<String?>(todayKey) }
@@ -1284,6 +1295,8 @@ private fun TodoScreen(
             datedTodos.filter { todo -> todo.tags.any { it.equals(tag, ignoreCase = true) } }
         } ?: datedTodos
     }
+    val visibleIncompleteTodos = remember(visibleTodos) { visibleTodos.filterNot { it.completed } }
+    val visibleCompletedTodos = remember(visibleTodos) { visibleTodos.filter { it.completed } }
     val dateLabel = selectedTodoDate?.let(::formatDayLabel) ?: "无日期"
 
     Column(
@@ -1331,7 +1344,7 @@ private fun TodoScreen(
                         )
                     }
                     Text(
-                        "${dateLabel} ${visibleTodos.count { !it.completed }}/${datedTodos.size}",
+                        "${dateLabel} ${visibleIncompleteTodos.size}/${datedTodos.size}",
                         modifier = Modifier.weight(1f),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.End,
@@ -1369,7 +1382,15 @@ private fun TodoScreen(
                     )
                 }
             }
-            items(visibleTodos, key = { it.id }) { todo ->
+            if (visibleIncompleteTodos.isNotEmpty()) {
+                item {
+                    TodoSectionHeader(
+                        title = "未完成",
+                        count = visibleIncompleteTodos.size
+                    )
+                }
+            }
+            items(visibleIncompleteTodos, key = { it.id }) { todo ->
                 TodoRow(
                     todo = todo,
                     selected = todo.id in selectedTodoIds,
@@ -1384,6 +1405,33 @@ private fun TodoScreen(
                         selectedTodoIds = selectedTodoIds + todo.id
                     }
                 )
+            }
+            if (visibleCompletedTodos.isNotEmpty()) {
+                item {
+                    TodoCompletedSectionHeader(
+                        count = visibleCompletedTodos.size,
+                        expanded = showCompletedTodos,
+                        onToggle = { showCompletedTodos = !showCompletedTodos }
+                    )
+                }
+                if (showCompletedTodos) {
+                    items(visibleCompletedTodos, key = { it.id }) { todo ->
+                        TodoRow(
+                            todo = todo,
+                            selected = todo.id in selectedTodoIds,
+                            selecting = selecting,
+                            onToggle = { onToggle(todo) },
+                            onEdit = { editingTodo = todo },
+                            onDelete = { onDelete(todo) },
+                            onToggleSelected = {
+                                selectedTodoIds = selectedTodoIds.toggle(todo.id)
+                            },
+                            onLongPress = {
+                                selectedTodoIds = selectedTodoIds + todo.id
+                            }
+                        )
+                    }
+                }
             }
         }
     }
@@ -1847,6 +1895,54 @@ private fun TodoTagFilterDialog(
             }
         }
     )
+}
+
+@Composable
+private fun TodoSectionHeader(
+    title: String,
+    count: Int
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text("$title · $count", fontWeight = FontWeight.SemiBold)
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.45f)
+        )
+    }
+}
+
+@Composable
+private fun TodoCompletedSectionHeader(
+    count: Int,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        HorizontalDivider(
+            modifier = Modifier.width(44.dp),
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)
+        )
+        Text("已完成 · $count", fontWeight = FontWeight.SemiBold)
+        Icon(
+            if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        HorizontalDivider(
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)
+        )
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
@@ -3260,7 +3356,6 @@ private fun SettingsScreen(
         }
         item {
             ProjectVersionCard(
-                projectRevision = appState.projectRevision,
                 appVersionName = appVersionName
             )
         }
@@ -3305,21 +3400,22 @@ private fun SettingsScreen(
             )
         }
         item {
-            AgentListCard(
+            UnifiedAgentProviderCard(
                 agents = appState.agents,
                 providers = appState.llmProviders,
-                nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
-                onUpsert = { agent ->
-                    val exists = appState.agents.any { it.id == agent.id }
-                    val agents = if (exists) {
-                        appState.agents.map { if (it.id == agent.id) agent else it }
-                    } else {
-                        appState.agents + agent
-                    }
-                    onStateChange(appState.copy(agents = agents))
-                },
-                onDelete = { agent ->
-                    onStateChange(appState.copy(agents = appState.agents.filterNot { it.id == agent.id }))
+                onProviderSelected = { providerId ->
+                    val current = selectUnifiedAgent(appState.agents) ?: defaultAgents().first()
+                    val unified = current.copy(
+                        id = "agent-unified",
+                        name = "对话",
+                        providerId = providerId,
+                        permissions = AgentDataPermissions(
+                            dailyRecords = true,
+                            todos = true,
+                            templates = true
+                        )
+                    )
+                    onStateChange(appState.copy(agents = listOf(unified)))
                 }
             )
         }
@@ -3378,7 +3474,17 @@ private fun WebDevSyncSettingsCard(
                 listOf("webdev", "aliyun", "baidu").forEachIndexed { index, provider ->
                     SegmentedButton(
                         selected = settings.cloudProvider == provider,
-                        onClick = { onChange(settings.copy(cloudProvider = provider)) },
+                        onClick = {
+                            val presetEndpoint = provider.syncEndpointPreset()
+                            val shouldReplaceEndpoint = settings.endpoint.isBlank() ||
+                                settings.endpoint in listOf("webdev", "aliyun", "baidu").map { it.syncEndpointPreset() }
+                            onChange(
+                                settings.copy(
+                                    cloudProvider = provider,
+                                    endpoint = if (shouldReplaceEndpoint) presetEndpoint else settings.endpoint
+                                )
+                            )
+                        },
                         shape = SegmentedButtonDefaults.itemShape(index, 3),
                         label = { Text(provider.cloudProviderLabel()) }
                     )
@@ -3390,7 +3496,6 @@ private fun WebDevSyncSettingsCard(
 
 @Composable
 private fun ProjectVersionCard(
-    projectRevision: Int,
     appVersionName: String
 ) {
     ElevatedCard(
@@ -3403,7 +3508,7 @@ private fun ProjectVersionCard(
                 Column(Modifier.weight(1f)) {
                     Text("版本", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                     Text(
-                        text = "项目 v$projectRevision · 应用 $appVersionName",
+                        text = "v$appVersionName",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
@@ -3413,7 +3518,7 @@ private fun ProjectVersionCard(
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Text(
-                        text = "v$projectRevision",
+                        text = "v$appVersionName",
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                         fontWeight = FontWeight.Bold
                     )
@@ -3729,6 +3834,63 @@ private fun LlmProviderEditDialog(
             }
         }
     )
+}
+
+@Composable
+private fun UnifiedAgentProviderCard(
+    agents: List<AgentSettings>,
+    providers: List<LlmProviderSettings>,
+    onProviderSelected: (String) -> Unit
+) {
+    val agent = selectUnifiedAgent(agents)
+    var providerMenuExpanded by remember { mutableStateOf(false) }
+    val selectedProvider = providers.firstOrNull { it.id == agent?.providerId }
+
+    ElevatedCard(
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("对话模型", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Box {
+                OutlinedButton(
+                    enabled = providers.isNotEmpty(),
+                    onClick = { providerMenuExpanded = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        selectedProvider?.agentProviderLabel() ?: "选择 Provider",
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Start
+                    )
+                    Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                }
+                DropdownMenu(
+                    expanded = providerMenuExpanded,
+                    onDismissRequest = { providerMenuExpanded = false }
+                ) {
+                    providers.forEach { provider ->
+                        DropdownMenuItem(
+                            text = { Text(provider.agentProviderLabel()) },
+                            onClick = {
+                                onProviderSelected(provider.id)
+                                providerMenuExpanded = false
+                            }
+                        )
+                    }
+                }
+            }
+            Text(
+                selectedProvider?.let {
+                    if (it.isConfiguredForChat()) "已配置" else "请先在 Provider 中补全模型和 API Key"
+                } ?: "未选择 Provider",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
 }
 
 @Composable
@@ -4647,6 +4809,12 @@ private fun String.cloudProviderLabel(): String = when (this) {
     else -> "WebDev"
 }
 
+private fun String.syncEndpointPreset(): String = when (this) {
+    "aliyun" -> "https://openapi.aliyundrive.com"
+    "baidu" -> "https://pan.baidu.com/rest/2.0/xpan"
+    else -> ""
+}
+
 private fun localEncouragement(record: PendingRecord, nickname: String): String {
     val name = nickname.ifBlank { DEFAULT_NICKNAME }
     return "$name，你刚刚把 ${record.focusMinutes} 分钟真正交给了「${record.todoTitle}」。这不是一句轻飘飘的“不错”，而是一次清清楚楚的推进：你坐下来、守住了这一轮、让事情往前走了一步。先把这份完成感收下，然后用复盘写下一个最小下一步。你已经启动了惯性，接下来只需要顺着它再走一点。"
@@ -4710,6 +4878,15 @@ private fun AppState.toUnifiedAgentContext(nickname: String): String {
     val today = dayKey(System.currentTimeMillis())
     val todayTodos = todos.filter { it.dueDate == today }
     val todayRecords = records.filter { dayKey(it.endedAt) == today }
+    val historyCutoff = System.currentTimeMillis() - 365L * 24 * 60 * 60 * 1000
+    val historicalTodos = todos
+        .filter { it.createdAt >= historyCutoff || it.dueDate != null }
+        .sortedWith(compareByDescending<TodoItem> { it.dueDate ?: "" }.thenByDescending { it.createdAt })
+        .take(180)
+    val historicalRecords = records
+        .filter { it.endedAt >= historyCutoff }
+        .sortedByDescending { it.endedAt }
+        .take(120)
     val todoText = todayTodos.take(12).joinToString("\n") { todo ->
         "- [${if (todo.completed) "x" else " "}] ${todo.title}（${todo.plannedPomodoros} 个番茄，标签：${todo.tags.joinToString("、").ifBlank { "无" }}）"
     }.ifBlank { "无" }
@@ -4717,11 +4894,21 @@ private fun AppState.toUnifiedAgentContext(nickname: String): String {
         "- ${formatClockTime(record.endedAt)} ${record.todoTitle}，${record.focusMinutes} 分钟"
     }.ifBlank { "无" }
     val templateText = templates.take(6).joinToString("、") { it.name }.ifBlank { "无" }
+    val historyTodoText = historicalTodos.joinToString("\n") { todo ->
+        val status = if (todo.completed) "已完成" else "未完成"
+        val date = todo.dueDate ?: dayKey(todo.createdAt)
+        "- $date [$status] ${todo.title}（${todo.tags.joinToString("、").ifBlank { "无标签" }}，${todo.plannedPomodoros} 个番茄）"
+    }.ifBlank { "无" }
+    val historyRecordText = historicalRecords.joinToString("\n") { record ->
+        "- ${dayKey(record.endedAt)} ${record.todoTitle}，${record.focusMinutes} 分钟"
+    }.ifBlank { "无" }
     return buildString {
         append("用户昵称：${nickname.ifBlank { DEFAULT_NICKNAME }}\n")
         append("今天日期：$today\n")
         append("今日待办：\n$todoText\n")
         append("今日番茄记录：\n$recordText\n")
+        append("近 365 天待办历史（用于识别同类事项和行程关联）：\n$historyTodoText\n")
+        append("近 365 天番茄记录摘要：\n$historyRecordText\n")
         append("可用复盘模板：$templateText\n")
         append("长期记忆：${agentMemory.ifBlank { "暂无" }}")
     }
@@ -4844,7 +5031,8 @@ private suspend fun generateAgentTodoDrafts(
     state: AppState,
     agent: AgentSettings,
     provider: LlmProviderSettings,
-    nickname: String
+    nickname: String,
+    planningMode: Boolean = false
 ): List<TodoDraft> {
     val today = dayKey(System.currentTimeMillis())
     val systemPrompt = buildString {
@@ -4856,6 +5044,9 @@ private suspend fun generateAgentTodoDrafts(
         append(" 只返回结构化行，每行一个任务：TASK | 动词 | 对象/结果 | yyyy-MM-dd 或 空 | 标签1,标签2 | 番茄数。")
         append(" 原则：一件事只输出一行；不要照抄口语原文；标题必须读起来通顺，像“整理项目周报材料”“给客户回复报价邮件”。")
         append(" 如果用户只是描述一个目标，先收束成一个最小可执行动作。")
+        if (planningMode) {
+            append(" 当前处于计划模式：如果用户给出大型事件或目标，要拆成 2-6 个能分别用番茄钟推进的小待办。")
+        }
         append(" 如果输入里有因果、补充说明、背景，不要拆成独立任务。")
         append(" 标签 1-3 个，番茄数 1-6。无法形成待办就返回 NONE。")
         append("\n\n当前上下文：\n")
