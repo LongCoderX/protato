@@ -101,12 +101,10 @@ import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -126,7 +124,6 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -141,9 +138,13 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.Density
 import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.startForegroundService
+import com.protato.app.ai.LlmChatMessage
+import com.protato.app.ai.fetchLlmModels
+import com.protato.app.ai.requestLlmChat
+import com.protato.app.ui.MainTab
+import com.protato.app.ui.ProtatoTheme
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
@@ -187,15 +188,6 @@ class MainActivity : ComponentActivity() {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
-}
-
-private enum class MainTab(val label: String, val icon: ImageVector) {
-    Agent("对话", Icons.AutoMirrored.Outlined.Chat),
-    Focus("专注", Icons.Outlined.Timer),
-    Todo("待办", Icons.AutoMirrored.Outlined.List),
-    Templates("模板", Icons.AutoMirrored.Outlined.ViewList),
-    Records("记录", Icons.Outlined.WorkHistory),
-    Settings("设置", Icons.Outlined.Settings)
 }
 
 @Composable
@@ -513,30 +505,6 @@ fun ProtatoApp() {
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun ProtatoTheme(fontScale: Float, content: @Composable () -> Unit) {
-    val colors = lightColorScheme(
-        primary = Color(0xFFE94F37),
-        onPrimary = Color.White,
-        secondary = Color(0xFF2F9E44),
-        tertiary = Color(0xFF456990),
-        background = Color(0xFFFAFAF8),
-        surface = Color(0xFFFFFFFF),
-        surfaceVariant = Color(0xFFF0EEE9),
-        outline = Color(0xFFD1CCC1)
-    )
-    val density = LocalDensity.current
-    CompositionLocalProvider(
-        LocalDensity provides Density(density.density, fontScale)
-    ) {
-        MaterialTheme(
-            colorScheme = colors,
-            typography = MaterialTheme.typography,
-            content = content
-        )
     }
 }
 
@@ -1753,6 +1721,9 @@ private fun TodoDraftMetadataRow(draft: TodoDraft) {
         item { TodoPomodoroChip(draft.plannedPomodoros) }
         draft.dueDate?.let { dueDate ->
             item { TodoDateChip(dueDate) }
+        }
+        draft.reminderAt?.let { reminderAt ->
+            item { TodoReminderChip(reminderAt) }
         }
         items(draft.tags, key = { it }) { tag ->
             TodoTagChip(tag)
@@ -4623,11 +4594,6 @@ private fun SettingLine(label: String, value: String) {
     }
 }
 
-private data class LlmChatMessage(
-    val role: String,
-    val content: String
-)
-
 @Composable
 private fun RecordChatDialog(
     record: PomodoroRecord,
@@ -5304,6 +5270,7 @@ private data class PendingRecord(
 private data class TodoDraft(
     val title: String,
     val dueDate: String? = null,
+    val reminderAt: Long? = null,
     val tags: List<String> = emptyList(),
     val plannedPomodoros: Int = 1
 ) {
@@ -5312,6 +5279,7 @@ private data class TodoDraft(
             id = newId(),
             title = title.trim(),
             dueDate = dueDate,
+            reminderAt = reminderAt,
             tags = tags,
             plannedPomodoros = plannedPomodoros.coerceIn(1, 24)
         )
@@ -5345,6 +5313,7 @@ private data class TodoEditDraft(
     val id: String,
     val title: String? = null,
     val dueDate: String? = null,
+    val reminderAt: Long? = null,
     val tags: List<String>? = null,
     val plannedPomodoros: Int? = null,
     val completed: Boolean? = null
@@ -5353,6 +5322,7 @@ private data class TodoEditDraft(
         return todo.copy(
             title = title ?: todo.title,
             dueDate = dueDate ?: todo.dueDate,
+            reminderAt = reminderAt ?: todo.reminderAt,
             tags = tags ?: todo.tags,
             plannedPomodoros = plannedPomodoros ?: todo.plannedPomodoros,
             completed = completed ?: todo.completed
@@ -5367,6 +5337,7 @@ private data class TodoEditDraft(
         return TodoDraft(
             title = previewTitle(original),
             dueDate = dueDate ?: original?.dueDate,
+            reminderAt = reminderAt ?: original?.reminderAt,
             tags = tags ?: original?.tags.orEmpty(),
             plannedPomodoros = plannedPomodoros ?: original?.plannedPomodoros ?: 1
         )
@@ -5378,6 +5349,7 @@ private fun todoEditDraftKey(edit: TodoEditDraft): String {
         edit.id,
         edit.title.orEmpty(),
         edit.dueDate.orEmpty(),
+        edit.reminderAt?.toString().orEmpty(),
         edit.tags?.joinToString(",").orEmpty(),
         edit.plannedPomodoros?.toString().orEmpty(),
         edit.completed?.toString().orEmpty()
@@ -5391,6 +5363,7 @@ private fun List<TodoEditDraft>.filterNewTodoEdits(
     val todosById = existingTodos.associateBy { it.id }
     return filter { edit ->
         val original = todosById[edit.id] ?: return@filter false
+        if (original.completed) return@filter false
         val updated = edit.applyTo(original)
         todoEditDraftKey(edit) !in handledKeys && updated != original
     }
@@ -5576,16 +5549,16 @@ private suspend fun requestUnifiedAgentChat(
         append(" 你可以读取待办、今日番茄记录、复盘模板和长期记忆。")
         append(" 你可以按日期、标签、完成状态和关键词查询/筛选上下文中的待办，然后基于 todoId 提出编辑草案。")
         append(" 如果要新增待办，必须调用工具 propose_todos；用户确认后才会写入 TodoList，不要声称已经添加。")
-        append(" 如果要修改已有待办，先根据上下文中的 todoId 精确定位，再调用工具 propose_todo_updates；用户确认后才会更新。")
+        append(" 如果要修改已有未完成待办，先根据上下文中的 todoId 精确定位，再调用工具 propose_todo_updates；用户确认后才会更新。")
         append("\n\n可用工具：")
         append("\npropose_todos：在对话中提出待办草案，由 App 展示确认/拒绝卡片。")
         append("\n调用格式必须放在独立 Markdown 代码块中：")
         append("\n```protato_tool")
-        append("\n{\"tool\":\"propose_todos\",\"todos\":[{\"title\":\"明确可执行的待办\",\"dueDate\":\"yyyy-MM-dd 或 null\",\"tags\":[\"标签\"],\"plannedPomodoros\":1}]}")
+        append("\n{\"tool\":\"propose_todos\",\"todos\":[{\"title\":\"明确可执行的待办\",\"dueDate\":\"yyyy-MM-dd 或 null\",\"reminderAt\":\"yyyy-MM-dd HH:mm 或 null\",\"tags\":[\"标签\"],\"plannedPomodoros\":1}]}")
         append("\n```")
-        append("\npropose_todo_updates：提出已有待办的编辑草案。格式：")
+        append("\npropose_todo_updates：提出已有未完成待办的编辑草案，可编辑 title、dueDate、reminderAt、tags、plannedPomodoros。格式：")
         append("\n```protato_tool")
-        append("\n{\"tool\":\"propose_todo_updates\",\"edits\":[{\"id\":\"todoId\",\"title\":\"新标题\",\"dueDate\":\"yyyy-MM-dd\",\"tags\":[\"标签\"],\"plannedPomodoros\":1,\"completed\":false}]}")
+        append("\n{\"tool\":\"propose_todo_updates\",\"edits\":[{\"id\":\"todoId\",\"title\":\"新标题\",\"dueDate\":\"yyyy-MM-dd\",\"reminderAt\":\"yyyy-MM-dd HH:mm\",\"tags\":[\"标签\"],\"plannedPomodoros\":1}]}")
         append("\n```")
         append("\n工具调用必须是严格 JSON；不要输出伪 JSON、注释、单引号或多余字段。")
         append(" 同一次回复最多调用一次工具，todos/edits 最多 6 个；工具块之外可以用一句自然语言说明等待用户确认。")
@@ -5720,6 +5693,7 @@ private fun parseAgentTodoToolCall(rawJson: String): List<TodoDraft> {
                 if (title.isBlank()) continue
                 val dueDate = normalizedTodoDate(item.optString("dueDate"))
                     ?: normalizedTodoDate(item.optString("date"))
+                val reminderAt = item.optionalReminderAt()
                 val plannedPomodoros = item.optInt(
                     "plannedPomodoros",
                     item.optInt("pomodoros", 1)
@@ -5733,6 +5707,7 @@ private fun parseAgentTodoToolCall(rawJson: String): List<TodoDraft> {
                     TodoDraft(
                         title = title,
                         dueDate = dueDate,
+                        reminderAt = reminderAt,
                         tags = tags.ifEmpty { inferTodoTags(title) },
                         plannedPomodoros = plannedPomodoros.coerceIn(1, 24)
                     )
@@ -5756,6 +5731,7 @@ private fun parseAgentTodoEditToolCall(rawJson: String): List<TodoEditDraft> {
                 if (id.isBlank()) continue
                 val title = item.optionalNonBlankString("title")?.take(40)
                 val dueDate = item.optionalNonBlankString("dueDate")?.let(::normalizedTodoDate)
+                val reminderAt = item.optionalReminderAt()
                 val tags = item.optJSONArray("tags")?.toStringList()
                     ?.flatMap(::parseTodoTags)
                     ?.distinctBy { it.lowercase(Locale.getDefault()) }
@@ -5766,7 +5742,14 @@ private fun parseAgentTodoEditToolCall(rawJson: String): List<TodoEditDraft> {
                     null
                 }
                 val completed = if (item.has("completed")) item.optBoolean("completed") else null
-                if (title == null && dueDate == null && tags == null && plannedPomodoros == null && completed == null) {
+                if (
+                    title == null &&
+                    dueDate == null &&
+                    reminderAt == null &&
+                    tags == null &&
+                    plannedPomodoros == null &&
+                    completed == null
+                ) {
                     continue
                 }
                 add(
@@ -5774,6 +5757,7 @@ private fun parseAgentTodoEditToolCall(rawJson: String): List<TodoEditDraft> {
                         id = id,
                         title = title,
                         dueDate = dueDate,
+                        reminderAt = reminderAt,
                         tags = tags,
                         plannedPomodoros = plannedPomodoros,
                         completed = completed
@@ -5796,6 +5780,14 @@ private fun JSONArray.toStringList(): List<String> {
 private fun JSONObject.optionalNonBlankString(name: String): String? {
     if (!has(name) || isNull(name)) return null
     return optString(name).trim().takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+}
+
+private fun JSONObject.optionalReminderAt(): Long? {
+    if (!has("reminderAt") || isNull("reminderAt")) return null
+    val raw = optString("reminderAt").trim()
+    if (raw.isBlank() || raw.equals("null", ignoreCase = true)) return null
+    raw.toLongOrNull()?.let { return it.takeIf { value -> value > 0L } }
+    return normalizedReminderAt(raw)
 }
 
 private fun localUnifiedAgentReply(
@@ -5843,7 +5835,7 @@ private fun AppState.toUnifiedAgentContext(nickname: String): String {
         .sortedByDescending { it.endedAt }
         .take(120)
     val todoText = todayTodos.take(12).joinToString("\n") { todo ->
-        "- id=${todo.id} [${if (todo.completed) "x" else " "}] ${todo.title}（日期：${todo.dueDate ?: "无"}，${todo.plannedPomodoros} 个番茄，标签：${todo.tags.joinToString("、").ifBlank { "无" }}）"
+        "- id=${todo.id} [${if (todo.completed) "x" else " "}] ${todo.title}（日期：${todo.dueDate ?: "无"}，提醒：${todo.reminderAt?.let(::formatTime) ?: "无"}，${todo.plannedPomodoros} 个番茄，标签：${todo.tags.joinToString("、").ifBlank { "无" }}）"
     }.ifBlank { "无" }
     val recordText = todayRecords.takeLast(8).joinToString("\n") { record ->
         "- ${formatClockTime(record.endedAt)} ${record.todoTitle}，${record.focusMinutes} 分钟"
@@ -5852,7 +5844,7 @@ private fun AppState.toUnifiedAgentContext(nickname: String): String {
     val historyTodoText = historicalTodos.joinToString("\n") { todo ->
         val status = if (todo.completed) "已完成" else "未完成"
         val date = todo.dueDate ?: dayKey(todo.createdAt)
-        "- id=${todo.id} $date [$status] ${todo.title}（${todo.tags.joinToString("、").ifBlank { "无标签" }}，${todo.plannedPomodoros} 个番茄）"
+        "- id=${todo.id} $date [$status] ${todo.title}（提醒：${todo.reminderAt?.let(::formatTime) ?: "无"}，${todo.tags.joinToString("、").ifBlank { "无标签" }}，${todo.plannedPomodoros} 个番茄）"
     }.ifBlank { "无" }
     val historyRecordText = historicalRecords.joinToString("\n") { record ->
         "- ${dayKey(record.endedAt)} ${record.todoTitle}，${record.focusMinutes} 分钟"
@@ -6535,7 +6527,8 @@ private fun dateKeyToLocalMillis(key: String, hour: Int, minute: Int): Long {
     val parser = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).apply {
         isLenient = false
     }
-    return parser.parse("$key ${hour.coerceIn(0, 23)}:${minute.coerceIn(0, 59)}")?.time
+    val timeText = "%02d:%02d".format(hour.coerceIn(0, 23), minute.coerceIn(0, 59))
+    return parser.parse("$key $timeText")?.time
         ?: System.currentTimeMillis()
 }
 
@@ -6549,6 +6542,18 @@ private fun normalizedTodoDate(value: String): String? {
         dayKey(parser.parse(trimmed)?.time ?: return null)
     } catch (_: ParseException) {
         null
+    }
+}
+
+private fun normalizedReminderAt(value: String): Long? {
+    val trimmed = value.trim()
+    val patterns = listOf("yyyy-MM-dd HH:mm", "yyyy-MM-dd HH:mm:ss")
+    return patterns.firstNotNullOfOrNull { pattern ->
+        runCatching {
+            SimpleDateFormat(pattern, Locale.getDefault()).apply {
+                isLenient = false
+            }.parse(trimmed)?.time
+        }.getOrNull()
     }
 }
 
@@ -6664,36 +6669,6 @@ private fun playToneSequence(tones: List<Pair<Int, Int>>) {
         }
         generator.release()
     }.start()
-}
-
-private suspend fun fetchLlmModels(endpoint: String, apiKey: String): List<String> {
-    return withContext(Dispatchers.IO) {
-        val connection = (URL(normalizeModelsEndpoint(endpoint)).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = 10_000
-            readTimeout = 10_000
-            if (apiKey.isNotBlank()) {
-                setRequestProperty("Authorization", "Bearer $apiKey")
-            }
-        }
-        try {
-            val responseCode = connection.responseCode
-            val stream = if (responseCode in 200..299) {
-                connection.inputStream
-            } else {
-                connection.errorStream ?: connection.inputStream
-            }
-            val body = BufferedReader(InputStreamReader(stream)).use { it.readText() }
-            if (responseCode !in 200..299) {
-                throw IllegalStateException("获取模型失败：HTTP $responseCode")
-            }
-            parseModelNames(body).ifEmpty {
-                throw IllegalStateException("接口未返回可选择模型")
-            }
-        } finally {
-            connection.disconnect()
-        }
-    }
 }
 
 private suspend fun syncWebDevState(state: AppState) {
@@ -6877,99 +6852,6 @@ private inline fun <T> List<T>.toJsonArrayForSync(transform: (T) -> Any): JSONAr
     val array = JSONArray()
     forEach { array.put(transform(it)) }
     return array
-}
-
-private suspend fun requestLlmChat(
-    provider: LlmProviderSettings,
-    messages: List<LlmChatMessage>
-): String {
-    return withContext(Dispatchers.IO) {
-        val body = JSONObject()
-            .put("model", provider.modelName)
-            .put("temperature", 0.8)
-            .put(
-                "messages",
-                JSONArray().apply {
-                    messages.forEach { message ->
-                        put(
-                            JSONObject()
-                                .put("role", message.role)
-                                .put("content", message.content)
-                        )
-                    }
-                }
-            )
-        val connection = (URL(normalizeChatEndpoint(provider.endpoint)).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 15_000
-            readTimeout = 30_000
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("Authorization", "Bearer ${provider.apiKey}")
-        }
-        try {
-            connection.outputStream.use { stream ->
-                stream.write(body.toString().toByteArray(Charsets.UTF_8))
-            }
-            val responseCode = connection.responseCode
-            val stream = if (responseCode in 200..299) {
-                connection.inputStream
-            } else {
-                connection.errorStream ?: connection.inputStream
-            }
-            val response = BufferedReader(InputStreamReader(stream)).use { it.readText() }
-            if (responseCode !in 200..299) {
-                throw IllegalStateException("AI 请求失败：HTTP $responseCode")
-            }
-            parseChatContent(response).ifBlank {
-                throw IllegalStateException("AI 没有返回内容")
-            }
-        } finally {
-            connection.disconnect()
-        }
-    }
-}
-
-private fun normalizeModelsEndpoint(endpoint: String): String {
-    val trimmed = endpoint.trim().trimEnd('/')
-    return when {
-        trimmed.endsWith("/models") -> trimmed
-        trimmed.endsWith("/v1") -> "$trimmed/models"
-        else -> "$trimmed/v1/models"
-    }
-}
-
-private fun normalizeChatEndpoint(endpoint: String): String {
-    val trimmed = endpoint.trim().trimEnd('/')
-    return when {
-        trimmed.endsWith("/chat/completions") -> trimmed
-        trimmed.endsWith("/v1") -> "$trimmed/chat/completions"
-        else -> "$trimmed/v1/chat/completions"
-    }
-}
-
-private fun parseModelNames(body: String): List<String> {
-    val root = body.trim()
-    val models = if (root.startsWith("[")) {
-        JSONArray(root)
-    } else {
-        JSONObject(root).optJSONArray("data") ?: JSONArray()
-    }
-    return List(models.length()) { index ->
-        val item = models.opt(index)
-        when (item) {
-            is JSONObject -> item.optString("id").ifBlank { item.optString("name") }
-            is String -> item
-            else -> ""
-        }
-    }.filter { it.isNotBlank() }.distinct()
-}
-
-private fun parseChatContent(body: String): String {
-    val root = JSONObject(body)
-    val choice = root.optJSONArray("choices")?.optJSONObject(0) ?: return ""
-    val messageContent = choice.optJSONObject("message")?.optString("content").orEmpty()
-    return messageContent.ifBlank { choice.optString("text") }.trim()
 }
 
 private fun newId(): String = UUID.randomUUID().toString()
