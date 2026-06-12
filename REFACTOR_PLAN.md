@@ -2,136 +2,228 @@
 
 ## Purpose
 
-Protato 已经具备完整的产品雏形：待办、番茄计时、复盘记录、AI 对话、模型配置和 WebDAV 同步都能串起来。当前主要风险不是单点功能缺失，而是边界不清导致扩展成本快速上升。
+Protato 已经具备待办、番茄计时、复盘记录、AI 对话、模型配置和 WebDAV 同步等完整产品雏形。当前重构的核心目标不是继续堆功能，而是把“大文件 + 弱边界”的结构整理成可持续扩展的架构。
 
-本计划先定义重构方向，再进入代码拆分。目标是让后续功能可以在清晰模块内演进，而不是继续扩大 `MainActivity.kt`。
+本文件现在只保留三类内容：
 
-## Progress
+- 当前代码已经完成了什么。
+- 还有多少没有完成。
+- 后续应该按什么边界继续拆。
+
+历史过程中重复的进度日志、过期问题描述和已经完成的阶段说明已合并到末尾的“重复内容整理”。
+
+## Current Snapshot
+
+更新时间：2026-06-12
 
 ### Completed
 
-- `ui/ProtatoTheme.kt` 已从 `MainActivity.kt` 抽出。
-- `ui/AppNavigation.kt` 已承载主导航枚举和自定义底栏。
-- `ai/LlmClient.kt` 已承载 LLM chat 请求、模型列表请求和基础响应解析。
-- 底部导航已从 6 个入口收敛为中心突出式 Agent 入口：
+- `MainActivity.kt` 已从约 6999 行降到 35 行，只负责 Activity 启动、通知权限请求和 `setContent { ProtatoApp() }`。
+- 原 `ProtatoLogic.kt` 已移除。
+- `ui/ProtatoTheme.kt` 已抽出主题。
+- `ui/AppNavigation.kt` 已承载主导航枚举和中心突出式底部导航。
+- 底部导航已从 6 个一级入口收敛为 5 个主入口：
   - 左侧：`任务`、`专注`
   - 中心：圆形突出的 `对话`
   - 右侧：`记录`、`更多`
 - `模板` 和 `设置` 已从底部主导航移入 `更多` 二级入口。
-- `模板` 和 `设置` 二级页面已增加返回入口。
-- 已清理 `Icons.Outlined.Label` deprecation warning，改用 AutoMirrored 图标。
-- 已删除未使用的 `AgentListCard`、`UnifiedAgentProviderCard` 遗留组件。
-- 已开始按目录拆分 `MainActivity.kt` 的 Compose 组件：
-  - `ui/components/`: `Header`, `SecondaryHeader`, `EmptyState`, `SettingActionRow`, `MarkdownText`, `ChatBubble`, `CelebrationCanvas`, `TodoChips`.
-  - `ui/screens/more/`: `MoreScreen`.
-  - `ui/screens/focus/`: `TimerRing`, `DurationEditDialog`.
-  - `ui/screens/records/`: `DailySummaryDialog`, `DaySwitcher`, `DailySummaryCard`, `RecordTodoChip`, `RecordAnswerFields`, `RecordTodoSelector`, `TimelineRecordItem`.
-  - `ui/screens/settings/`: `ProjectVersionCard`, `NicknameSettingsCard`, `FontScaleSettingsCard`, `WebDevSyncSettingsCard`, `RecordPolishProviderCard`, `PermissionCheckbox`, `SettingLine`, `LlmProviderRow`, `AgentRow`, `AgentEditDialog`, `LlmProviderEditDialog`, `LlmProviderListCard`.
-  - `ui/screens/templates/`: `TemplateCard`, `FieldEditorRow`, `TemplateEditorDialog`, `TemplateAiDialog`.
-  - `ui/screens/todo/`: `TodoChoiceLabel`, `TodoSectionHeader`, `TodoSwipeBackground`, `TodoSelectionBar`, `TodoDraftMetadataRow`, `TodoMetadataStrip`, `TodoExpandedDetails`.
-- `MainActivity.kt` 已从约 6999 行降到约 4674 行。
+- `ai/LlmClient.kt` 已承载 LLM chat 请求、模型列表请求和基础响应解析。
+- 原 `ai/AgentLogic.kt` 已拆分为 `AgentSelectors.kt`、`AgentConversation.kt`、`AgentPromptBuilder.kt`、`AgentContextBuilder.kt`、`AgentActionParser.kt` 和 `LocalAgentFallbacks.kt`。
+- 原 `ai/TodoAiLogic.kt` 已拆分为 `TodoSuggestionService.kt`、`TodoPlanParser.kt`、`TodoTextParser.kt`、`TodoDateInference.kt` 和 `TodoMetadataInference.kt`。
+- 已引入 `AgentAction` 强类型动作边界，`AgentActionParser` 会把模型输出解析成 `Reply`、`ProposeTodos` 或 `ProposeTodoUpdates`。
+- 已增加 `AgentActionParserTest`，覆盖 fenced JSON、native `tool_calls` 和未知工具拒绝。
+- 已引入第一版 `AgentIntentResolver`，用确定性规则区分普通聊天、规划待办、修改待办、查询待办、复盘总结、确认/拒绝 pending action 和澄清。
+- `AgentContextBuilder` 已按 `AgentDataPermissions` 裁剪待办、番茄记录和模板上下文。
+- 已增加 `AgentContextBuilderTest` 和 `AgentIntentResolverTest`。
+- 已建立 `ai/AgentTurnService.kt`，统一处理单轮 Agent 请求、本地 fallback、工具解析、重复草案过滤和返回结果。
+- 已建立 `ai/AgentSessionState.kt`，集中管理 Agent pending 草案、pending 编辑和 handled key 去重状态。
+- `AgentScreen.kt` 不再直接调用 `requestUnifiedAgentChat`、`generateAgentTodoDrafts` 或 `parseAgentToolResponse`，pending action 生命周期也已收敛到 `AgentSessionState`。
+- `LlmProviderSettings.isConfiguredForChat()` 已从 UI 辅助文件迁入 `ai/LlmClient.kt`，Provider 可用性判断归 AI/LLM 边界。
+- 已建立第一版 `state/ProtatoStateHolder.kt`，集中处理 `AppState` 持有、revision 更新、保存和待办提醒同步。
+- 已建立第一版 `state/ProtatoEvents.kt`，并把事件按 `TodoProtatoEvent`、`RecordProtatoEvent`、`TemplateProtatoEvent`、`SettingsProtatoEvent`、`TimerProtatoEvent`、`AgentProtatoEvent` 分成事件族。
+- `ProtatoStateHolder.kt` 已收缩为 66 行的状态入口，只负责 dispatch、revision 和保存协调；具体状态变更已拆到各 reducer。
+- Todo 新增、批量新增、完成切换、更新、删除和批量删除已通过 `TodoEventReducer` 处理。
+- 记录更新和每日总结保存已通过 state event 处理。
+- 模板选择、创建/更新和删除已通过 state event 处理，删除最后一个模板时由 state 层兜底默认模板。
+- 设置中的昵称、字体、WebDAV、Provider 管理和复盘润色 Provider 选择已通过 state event 处理。
+- Focus/timer 的时长修改、session 开始/暂停/清空、pending record 取消和保存已通过 `TimerEventReducer` 处理。
+- Agent 对话消息追加、清空对话、确认/拒绝待办草案、确认/拒绝待办编辑草案已通过 `AgentEventReducer` 处理。
+- `AgentScreen.kt` 不再接收 `onStateChange(AppState)`，Agent UI 不能直接写整份 `AppState`，只能派发 `ProtatoEvent`。
+- 已建立 `state/ProtatoEffects.kt`，state reducer 通过 `ProtatoEffect` 声明提醒取消、提示音、计时服务、计时闹钟和通知取消等副作用。
+- 已建立 `platform/ProtatoEffectRunner.kt`，集中执行 Android reminder、timer service、alarm 和 notification 副作用。
+- `ProtatoApp.kt` 不再直接调用计时 service、计时 alarm、待办提醒取消或番茄通知取消，只保留页面 glue、WebDAV 同步触发和 Toast。
+- 已增加 `ProtatoStateHolderTest`，覆盖 Todo、记录、每日总结、模板、设置、Focus/timer 和 Agent 事件的状态更新、revision 递增和事件结果。
+- 已增加 `AgentTurnServiceTest`，覆盖无 Provider 时的本地 Agent turn 和重复待办草案过滤。
+- 已增加 `AgentSessionStateTest`，覆盖 pending action 保存、确认/拒绝后的 handled key 记录和 reset。
+- `ProtatoStore.kt` 已收缩为 72 行的文件读写外壳，负责本地 JSON 文件读写、调用 codec、返回明确 load result，并在保存/加载时抽取和回填 secrets。
+- 已新增 `AppStateJsonCodec.kt`，承载 AppState JSON encode/decode、旧字段兼容和默认值兜底。
+- 已增加 `AppStateJsonCodecTest`，覆盖非空 AppState round-trip 和最小 JSON 默认结构。
+- 已新增 `ProtatoStoreLoadResult`，读取状态可区分 `Missing`、`Success`、`Recovered` 和 `Failed`。
+- 已新增 `AppStateMigration.kt`，第一版集中识别 legacy `llmImport`、`encouragerAgent` 和 `shortBreakMinutes` 兼容恢复。
+- 已增加 `ProtatoStoreTest`，覆盖缺失文件、正常读取、legacy 恢复、非法 JSON 失败兜底、主状态 JSON 脱敏、secret 文件回填和旧明文 JSON 在下一次保存时迁出。
+- 已配置 `backup_rules.xml` 和 `data_extraction_rules.xml`，从 Android cloud backup 和 device transfer 中排除 `protato-state.json`。
+- 已增加 `BackupRulesTest`，防止备份规则遗漏本地状态文件。
+- 已新增 `SecretStore.kt` 第一版，将 LLM provider API key 和 WebDAV token 从 `protato-state.json` 分离到 `protato-secrets.json`。
+- `ProtatoStore.save()` 已改为保存脱敏后的 AppState JSON，并把 secrets 写入 `SecretStore`；`load()` 会把 secrets 回填到运行时 AppState。
+- WebDAV 同步已移动到 `sync/WebDavSync.kt`。
+- 日期、ID、标签色等工具已移动到 `util/`。
+- Android service / 提示音等平台副作用已移动到 `platform/PlatformEffects.kt`。
+- 计时完成、展示记录和计时格式化等逻辑已移动到 `domain/timer/TimerLogic.kt`。
+- 已拆出一批 Compose 子组件到 `ui/components/` 和 `ui/screens/...`。
+- `TodoFilterControls` 和 `TodoTagFilterDialog` 已从 `TodoScreen.kt` 拆到 `ui/screens/todo/TodoFilterComponents.kt`。
+- `Icons.Outlined.Label` deprecation warning 已清理。
 
 ### Verified
 
-- `JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ./gradlew :app:assembleDebug` 构建通过。
+- 最近一次验证命令：
 
-### Still Open
+```bash
+JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ./gradlew :app:testDebugUnitTest :app:assembleDebug
+```
 
-- `MainActivity.kt` 仍然承担大量 UI、状态协调和业务逻辑，尚未达到只负责 Activity setup 的目标。
-- `AgentScreen`, `TodoScreen`, `FocusScreen`, `TemplateScreen`, `RecordsScreen`, `SettingsScreen` 主体仍在 `MainActivity.kt`。
-- `state/` 层尚未建立，Compose 页面仍直接协调大量 `AppState` mutation。
-- `domain/` 层尚未建立，计时、待办、记录等业务规则仍分散在 UI 文件中。
-- Agent prompt、上下文构造、工具解析尚未完全抽入 `ai/`。
-- Agent 权限裁剪和记忆检索层尚未落地。
-- 设置页仍是长表单，尚未拆成 AI、同步、外观等二级设置页。
-- SecretStore 和备份策略尚未实现。
-- 自动化测试基线尚未补齐。
+- 结果：单元测试和 debug 构建通过。
 
-## Current Problems
+### Current Large Files
 
-### Oversized Entry File
+这些文件是后续重构的主要目标：
 
-`MainActivity.kt` 同时承载：
+| File | Lines | Status |
+| --- | ---: | --- |
+| `TodoScreen.kt` | 931 | 仍是最大 UI 文件；筛选区和 TodoRow 已拆出，后续可继续拆编辑区和批量操作 |
+| `ui/screens/settings/SettingsCards.kt` | 840 | 设置卡片集合过大，应拆 AI、同步、外观、关于等区域 |
+| `AgentScreen.kt` | 495 | Agent UI 仍承担 pending 草案展示和会话 glue，但 LLM turn 流程和 pending lifecycle 已迁入 `ai/` |
+| `RecordDialogs.kt` | 577 | 记录弹窗仍偏大，可按保存、编辑、模板回答拆分 |
+| `FocusScreen.kt` | 551 | 专注页仍含较多状态和交互逻辑 |
+| `ProtatoApp.kt` | 470 | 顶层导航、WebDAV 同步触发和页面 glue 仍偏重，需要继续迁入 `state/` 层 |
+| `AppStateJsonCodec.kt` | 446 | JSON encode/decode 已从 store 分离，但仍需要继续拆 legacy adapter 和 secret 引用 |
+| `ProtatoStore.kt` | 72 | 已变成文件 I/O shell，并有 load result 和 secret 抽取/回填；后续可把 secret 变换抽到 helper |
+| `SecretStore.kt` | 61 | 第一版只做文件分离，后续应接 Android Keystore 或加密实现 |
 
-- App 顶层状态和导航。
-- 所有 Compose 页面和通用组件。
-- 番茄计时状态流转。
-- Todo、模板、记录的业务逻辑。
-- LLM provider 请求。
-- Agent prompt 拼装。
-- 工具调用 JSON 解析。
-- WebDAV 同步。
-- 日期、标签、Markdown 等工具函数。
+## Remaining Work
 
-这让任何改动都容易产生跨功能影响，也使单元测试难以落地。
+按当前代码状态，主要剩余 6 个重构方向、约 15 个具体任务。
 
-### Weak Module Contracts
+### 1. Agent Command Boundary
 
-这里说的“模块契约”不是指文件数量，而是指每个模块应该对外承诺什么、禁止什么、由谁拥有某类决策。当前项目只有模型、存储、通知/闹钟服务和主界面几个粗粒度文件，导致新功能没有明确归属。
+状态：基础拆分、`AgentAction`、`AgentIntent` 第一版、权限裁剪、基础测试、Agent state 应用边界、单轮请求服务和 pending action 生命周期已完成；记忆检索仍需继续收紧。
 
-例如“Agent 根据待办和复盘记录回答用户”这件事，至少涉及五类职责：
+目标：让 Agent 从“prompt 约束的大函数”变成“能提出动作、但不能直接修改状态”的受控管线。
 
-- UI 展示聊天界面和确认卡片。
-- state 协调用户事件、AppState 更新、存储和异步调用。
-- domain 判断待办编辑、计时完成、记录保存等业务规则。
-- ai 检索上下文、构造 prompt、调用模型、解析动作。
-- data 保存状态、迁移旧数据、保护密钥。
+待做：
 
-如果没有契约，最省事的写法就是 Compose 按钮里直接拼 prompt、发网络、解析 JSON、修改 `AppState`、保存文件。短期能跑，长期会让 `MainActivity.kt` 继续膨胀。
+- 拆分 `ai/AgentLogic.kt`。已完成：
+  - `AgentSelectors.kt`
+  - `AgentConversation.kt`
+  - `AgentPromptBuilder.kt`
+  - `AgentContextBuilder.kt`
+  - `AgentActionParser.kt`
+  - `LocalAgentFallbacks.kt`
+- 拆分 `ai/TodoAiLogic.kt`。已完成：
+  - `TodoSuggestionService.kt`
+  - `TodoPlanParser.kt`
+  - `TodoTextParser.kt`
+  - `TodoDateInference.kt`
+  - `TodoMetadataInference.kt`
+- 引入明确的 `AgentAction`，让模型输出只能变成受支持的动作。已完成第一版。
+- 补 `AgentActionParserTest`。已完成第一版。
+- 引入明确的 `AgentIntent`，先用确定性规则判断用户意图。已完成第一版。
+- `AgentContextBuilder` 按权限和相关性裁剪上下文，禁止把完整 `AppState` 直接塞进 prompt。已完成权限裁剪第一版。
+- 抽出 `AgentTurnService`，让 Compose 不直接负责 LLM 请求、工具解析和重复草案过滤。已完成第一版。
+- 抽出 `AgentSessionState`，让 Compose 不直接维护 pending action 和 handled key 生命周期。已完成第一版。
+- `AgentActionParser` 拒绝未知工具、越权动作和不在检索上下文内的 target id。
+- domain/state 在用户确认后才应用 mutating action。已完成第一版：Agent 确认新增/编辑待办通过 `AgentProtatoEvent` 和 `AgentEventReducer` 落地。
+- 补 `AgentContextBuilderTest`。已完成第一版。
 
-本计划里的模块契约要回答这些问题：
+### 2. State Layer
 
-- 这个模块的输入是什么。
-- 输出是什么。
-- 允许依赖哪些模块。
-- 禁止依赖哪些模块。
-- 哪个模块拥有最终业务决策。
+状态：第一版主干和 effects 边界已完成，下一步应收紧异步流程。
 
-典型约束应该是：
+目标：让 Compose 页面只发事件，不直接协调大量 `AppState` mutation、存储保存、异步请求和平台副作用。
 
-- UI 不直接发起 LLM/WebDAV 请求，只触发事件。
-- domain 不依赖 Android `Context`，只处理纯业务规则。
-- data 负责持久化、迁移和密钥，不决定业务流程。
-- ai 不能直接修改 `AppState`，只能返回结构化 `AgentAction`。
-- Agent 不能直接读取完整 `AppState`，必须通过上下文构建器按权限和相关性裁剪。
+待做：
 
-### Crowded Navigation
+- 新建 `state/ProtatoStateHolder.kt`。已完成：持有 `AppState`、统一 revision、保存状态、同步待办提醒。
+- 新建 `state/ProtatoEvents.kt`。已完成第一版：Todo、Record、Template、Settings、Timer 事件族已建立。
+- 新建事件 reducer。已完成第一版：`TodoEventReducer`、`RecordEventReducer`、`TemplateEventReducer`、`SettingsEventReducer`、`TimerEventReducer`。
+- 新建 `AgentEventReducer`。已完成第一版：Agent 消息、确认/拒绝草案和确认/拒绝待办编辑已迁入 state 层。
+- 新建 `state/ProtatoEffects.kt`。已完成第一版：`ProtatoEventResult` 返回 `ProtatoEffect` 列表，不再返回一组临时布尔字段。
+- 新建 `platform/ProtatoEffectRunner.kt`。已完成第一版：集中执行 Todo reminder、timer service、timer alarm 和 notification 副作用。
+- 把 `ProtatoApp.kt` 中的顶层状态变更、保存、同步、计时服务协调迁入 state 层。部分完成：保存、提醒同步、Focus/timer 状态变更和计时平台副作用已迁出；WebDAV 同步请求和 Toast 仍在 `ProtatoApp.kt`。
+- 页面通过事件调用 state，而不是直接持有复杂业务流程。部分完成：Todo、记录、每日总结、模板、设置基础操作和 Focus/timer 状态变更已改为派发 `ProtatoEvent`。
 
-底部导航目前承载 6 个一级入口：对话、专注、待办、模板、记录、设置。对于移动端主导航来说过于拥挤，而且模板、Provider、Agent 设置更像二级配置，不应长期占据一级工作流入口。
+### 3. Domain Layer
 
-### Weak Agent Constraints
+状态：部分开始，仅 `domain/timer/TimerLogic.kt` 已落地。
 
-当前 Agent 主要靠 system prompt 约束行为，并通过 Markdown fenced JSON 模拟工具调用。这种方案兼容性高，但约束力弱：
+目标：业务规则可以不启动 Compose 就测试。
 
-- 工具调用不是 API 层面的 schema。
-- Agent 权限和实际上下文注入没有严格绑定。
-- 用户历史数据、待办标题、记忆文本可能影响 prompt 行为。
-- ReAct 提示容易让模型过度提取或错误拆分用户意图。
-- 对话历史、待办、复盘记录之间没有稳定的检索和记忆层。
+待做：
 
-## Design Principles
+- 新建 `domain/todo/`，承载 todo 创建、编辑、完成、删除、批量操作、筛选和去重。
+- 新建 `domain/record/`，承载记录保存、编辑、每日总结 fallback 和模板字段绑定。
+- 新建 `domain/template/`，承载模板创建、编辑、字段校验。
+- 继续扩展 `domain/timer/`，把更多计时状态流转从 UI 中移出。
+- 补 `TodoParserTest`、`TimerSessionReducerTest`。
 
-### Split by Responsibility, Not by File Count
+### 4. Data and Secrets
 
-拆分不是为了让文件变多，而是为了让每个模块有清楚的输入、输出和禁止事项。
+状态：已开始。`ProtatoStore.kt` 已从大文件拆成 store 外壳和 `AppStateJsonCodec`，并补了 codec/store 测试；`loadResult()` 第一版已能区分缺失、成功、兼容恢复和失败。Android 备份规则第一版已排除本地状态 JSON 和 secret 文件。SecretStore 文件分离第一版已落地，但尚未加密；用户可见恢复提示和更完整迁移仍未完成。
 
-### Domain First
+目标：存储层负责持久化、迁移和密钥安全，不参与业务流程。
 
-业务规则优先从 UI 中抽离。计时、待办编辑、记录生成、Agent action 解析都应该可以在不启动 Compose 的情况下测试。
+待做：
 
-### UI Owns Presentation Only
+- 将 `ProtatoStore.kt` 拆成 store、JSON adapter、migration、load result。部分完成：store、JSON adapter、migration inspect 和 load result 第一版已拆开。
+- 将 `AppStateJsonCodec.kt` 中的旧字段兼容逻辑继续拆到 legacy adapter，避免 codec 继续膨胀。
+- `ProtatoStore.load()` 不再长期吞掉所有异常后静默返回空状态，应返回 `Success` / `Recovered` / `Failed`。已完成第一版：兼容保留 `load()`，新增 `loadResult()`。
+- API Key 和 WebDAV 应用密码迁入 `SecretStore`。已完成第一版：从 `protato-state.json` 分离到 `protato-secrets.json`，后续需接加密存储。
+- AppState JSON 中只保存 secret id 或 alias。部分完成：当前保存时主 JSON 清空敏感值，运行时从 SecretStore 回填；后续模型层可补 alias/id。
+- 审查 `android:allowBackup` 和敏感文件备份策略。已完成第一版：`protato-state.json` 和 `protato-secrets.json` 已从 cloud backup 和 device transfer 中排除。
+- 补更完整的 `StateMigrationTest`。已完成第一版 `AppStateJsonCodecTest` 和 `ProtatoStoreTest`。
 
-Compose 层负责展示状态和发送用户事件，不直接负责存储、网络、prompt 拼装或工具解析。
+### 5. UI Cleanup
 
-### Agent Must Be Bounded by Data Permissions
+状态：部分完成。
 
-Agent 能看到什么，不由 prompt 自觉决定，而由上下文构建器强制裁剪。
+目标：UI 文件继续按页面区域和二级页面拆分，避免形成新的大文件。
 
-### Memory Is Retrieval, Not a Text Dump
+待做：
 
-长期记忆、历史对话、待办和复盘记录不应全部塞进 system prompt。Agent 应先基于用户输入检索相关上下文，再生成回复或动作草案。
+- 拆 `TodoScreen.kt`：
+  - screen state / route
+  - 日期筛选区。已完成第一版：`TodoFilterComponents.kt`
+  - todo list 区。部分完成：`TodoRow` 已迁入 `TodoListComponents.kt`
+  - todo editor
+  - 批量操作栏
+- 拆 `SettingsCards.kt`：
+  - AI 设置
+  - 同步设置
+  - 外观设置
+  - 关于/版本
+- 将设置页从长表单升级为二级设置中心。
+- 为 `RecordsScreen` 增加进入模板管理的自然入口。
+- 继续拆 `AgentScreen.kt`、`FocusScreen.kt`、`RecordDialogs.kt` 中的复合 UI。
 
-## Architecture Overview
+### 6. Memory Layer
+
+状态：未开始。
+
+目标：让对话、待办、复盘记录和长期记忆通过检索联动，而不是把所有历史文本直接塞进 prompt。
+
+待做：
+
+- 新增 `AgentMemoryItem` 模型。
+- 从确认后的 Agent 动作、保存后的总结和用户明确偏好中提取可控记忆。
+- 先实现本地确定性检索：
+  - 日期匹配
+  - 标签匹配
+  - todo 标题匹配
+  - 复盘标题匹配
+  - 最近对话关键词匹配
+- 增加记忆查看和删除入口。
+- 后续再考虑 embedding，不作为第一阶段目标。
+
+## Target Architecture
 
 ```mermaid
 flowchart TD
@@ -159,7 +251,14 @@ flowchart TD
     Effects --> UI
 ```
 
-这张图表达的是：UI 不拥有应用行为。UI 把用户操作发给 `state/`；`state/` 协调纯业务规则、持久化、AI 调用和 Android 平台副作用。`model/` 是共享数据结构，不承载副作用。
+核心边界：
+
+- UI 展示状态并发出事件。
+- state 协调业务、存储、AI 和平台副作用。
+- domain 只处理纯业务规则。
+- ai 只能返回结构化动作，不能直接修改状态。
+- data 只负责持久化、迁移和密钥。
+- platform 只负责 Android 系统能力。
 
 ## Target Package Structure
 
@@ -189,23 +288,13 @@ app/src/main/java/com/protato/app/
 
   domain/
     todo/
-      TodoUseCases.kt
-      TodoParser.kt
-      TodoFilters.kt
     timer/
-      TimerUseCases.kt
-      TimerSessionReducer.kt
     record/
-      RecordUseCases.kt
-      DailySummaryBuilder.kt
     template/
-      TemplateUseCases.kt
-    sync/
-      WebDavSyncClient.kt
 
   ai/
     LlmClient.kt
-    LlmProviderCatalog.kt
+    AgentIntentResolver.kt
     AgentContextBuilder.kt
     AgentMemoryStore.kt
     AgentPromptBuilder.kt
@@ -218,12 +307,6 @@ app/src/main/java/com/protato/app/
     AppNavigation.kt
     components/
     screens/
-      agent/
-      focus/
-      todo/
-      records/
-      settings/
-      templates/
 
   platform/
     PomodoroTimerService.kt
@@ -238,116 +321,82 @@ app/src/main/java/com/protato/app/
 
 ### model
 
-`model/` 是项目的名词表，只定义数据结构和枚举。
+负责数据结构和枚举。
 
 允许：
 
-- Kotlin 数据类。
-- 纯产品默认值常量。
-- 不含副作用的简单枚举。
+- Kotlin data class。
+- enum。
+- 不含副作用的默认值。
 
 禁止：
 
-- Android `Context`.
-- JSON 解析。
+- Android `Context`。
+- Compose imports。
 - 网络请求。
-- Compose imports.
+- JSON 解析。
 - 业务流程判断。
 
-示例归属：
+### ui
 
-- `TodoItem`
-- `TimerSession`
-- `PomodoroRecord`
-- `RecordTemplate`
-- `AgentSettings`
-- `LlmProviderSettings`
-- `AppState`
+负责 Compose 页面、组件和导航。
+
+允许：
+
+- 展示状态。
+- 发出用户事件。
+- 持有输入框、弹窗开关这类临时 UI 状态。
+
+禁止：
+
+- 直接发 LLM/WebDAV 请求。
+- 直接解析工具 JSON。
+- 直接构造 prompt。
+- 直接安排通知或闹钟。
+- 绕过 state 写复杂 `AppState` mutation。
 
 ### state
 
-`state/` 是应用状态协调层，负责把 UI 事件转成数据、业务、AI 和平台调用。
+负责应用状态协调。
 
 允许：
 
 - 持有当前 `AppState`。
-- 暴露 UI 可观察状态。
 - 接收 `ProtatoEvent`。
 - 调用 `domain/` 计算下一状态。
 - 调用 `data/` 保存或加载状态。
-- 调用 `ai/` 获取 Agent 回复。
+- 调用 `ai/` 获取 Agent 回复或动作草案。
 - 调用 `platform/` 安排通知、闹钟和服务。
 
 禁止：
 
-- 在 Compose 页面里绕过 state 直接改整份 `AppState`。
-- 在 state 内直接拼大段 prompt。
-- 在 state 内写 JSON 解析细节。
-
-示例事件：
-
-- `SendAgentMessage(text)`
-- `ApplyAgentTodoDrafts(drafts)`
-- `StartTimer(todoId, templateId)`
-- `PauseTimer`
-- `SaveRecord(record, answers)`
-- `UpdateTodo(todo)`
-
-这层可以先用普通 `ProtatoStateHolder` 实现，后续再决定是否升级为 Android `ViewModel`。
-
-### data
-
-`data/` 负责本地数据和持久化边界。
-
-允许：
-
-- 读取和写入状态。
-- 向后兼容的 JSON 迁移。
-- API Key 和 WebDAV 应用密码的安全存储。
-- Repository 风格的数据接口。
-
-禁止：
-
-- Compose UI.
-- Prompt 构造。
-- 判断番茄是否完成这类业务决策。
-- 直接调用通知、闹钟或 LLM。
-
-重要改进：
-
-- `ProtatoStore.load()` 不应长期吞掉所有异常后静默返回空状态。更好的返回值是 `LoadResult.Success`、`LoadResult.Recovered`、`LoadResult.Failed`。
-- API Key 和 WebDAV 应用密码不应存在普通 JSON 中，应迁移到 `SecretStore`。
+- 写大段 prompt。
+- 写 JSON 解析细节。
+- 把复杂业务规则埋在 UI callback 中。
 
 ### domain
 
-`domain/` 负责纯业务规则，应该尽量不依赖 Android。
+负责纯业务规则。
 
 允许：
 
-- Todo 创建、更新、筛选和去重。
+- Todo 创建、编辑、筛选和去重。
 - Timer 状态流转。
-- Record 生成。
+- Record 生成和字段绑定。
 - 本地解析 fallback。
 - 校验和业务不变量。
 
 禁止：
 
-- 直接持有 UI 状态。
-- 直接读写文件或访问网络。
-- 直接调用 Toast 或 Notification。
-- Android `Context`.
-- Compose imports.
-
-示例归属：
-
-- 一个 `TodoEditDraft` 是否能应用到某个 `TodoItem`。
-- 完成番茄后是否生成 `PendingPomodoroRecord`。
-- 保存记录时如何绑定模板和字段回答。
-- 根据当前日期筛选今日待办。
+- Android `Context`。
+- Compose imports。
+- 文件读写。
+- 网络请求。
+- Toast、Notification、AlarmManager。
 
 ### ai
 
-`ai/` 负责所有 LLM 和 Agent 相关逻辑。
+负责 LLM 和 Agent 管线。
 
 允许：
 
@@ -366,60 +415,45 @@ app/src/main/java/com/protato/app/
 - 直接读取完整 `AppState` 并塞进 prompt。
 - 保存用户数据。
 
-关键原则：
+### data
 
-- `AgentContextBuilder` 负责按权限和相关性裁剪上下文。
-- `AgentPromptBuilder` 负责构造 prompt。
-- `LlmClient` 负责模型请求。
-- `AgentActionParser` 负责把模型输出变成 `AgentAction`。
-- 是否应用 `AgentAction`，由 UI 确认和 state/domain 决定。
-
-### ui
-
-`ui/` 负责 Compose 页面、组件和导航。
+负责本地数据和持久化边界。
 
 允许：
 
-- 展示状态。
-- 发出用户事件。
-- 持有弹窗开关、输入框内容这类临时 UI 状态。
+- 读取和写入状态。
+- JSON adapter。
+- 向后兼容迁移。
+- 密钥安全存储。
+- Repository 风格接口。
 
 禁止：
 
-- 直接发网络请求。
-- 直接解析 JSON。
-- 直接构造 prompt。
-- 绕过事件分发，直接写复杂 `AppState` mutation。
-- 直接安排闹钟或通知。
-
-目标状态：
-
-- `AgentScreen` 展示对话、输入框、待确认动作卡片。
-- `FocusScreen` 展示计时器、当前待办、复盘入口。
-- `TodoScreen` 展示待办列表和筛选。
-- `RecordsScreen` 展示记录、总结和记录对话。
-- `SettingsScreen` 是二级设置入口，不再承载所有表单。
+- Compose UI。
+- Prompt 构造。
+- 业务流程决策。
+- 直接调用通知、闹钟或 LLM。
 
 ### platform
 
-`platform/` 负责 Android 系统能力。
+负责 Android 系统能力。
 
 允许：
 
-- `Service`, `BroadcastReceiver`, `AlarmManager`, `NotificationManager`.
-- 前台服务协调。
+- `Service`。
+- `BroadcastReceiver`。
+- `AlarmManager`。
+- `NotificationManager`。
 - 必须触碰 Android API 的权限检查。
 
 禁止：
 
-- Compose UI.
+- Compose UI。
 - LLM 调用。
 - Prompt 逻辑。
 - 业务推理。
 
-### Dependency Direction
-
-推荐依赖方向：
+## Dependency Direction
 
 ```text
 ui -> state -> domain
@@ -427,12 +461,12 @@ ui -> state -> domain
             -> ai
             -> platform
 
-ai -> model
+ui -> model
+state -> model
 domain -> model
 data -> model
+ai -> model
 platform -> model
-state -> model
-ui -> model
 ```
 
 禁止反向依赖：
@@ -445,83 +479,9 @@ platform -> ai
 data -> ui
 ```
 
-第一轮重构优先补 `state/` 和 `ai/` 边界。UI 文件拆分很重要，但如果状态流和 Agent 管线仍然混在 Compose 里，即使拆成多个 UI 文件，也只是形成多个新的大文件。
+## Agent Architecture
 
-## UI Navigation Plan
-
-### New Primary Navigation
-
-当前已实现的导航使用四个侧边入口加一个中心 Agent 按钮：
-
-- `任务`：日期待办、筛选和批量操作。
-- `专注`：计时、当前任务绑定和番茄结束复盘。
-- `对话`：中心圆形 Agent 入口，负责计划、日程助手和记忆化对话。
-- `记录`：番茄时间线、每日总结和记录对话。
-- `更多`：低频二级入口。
-
-### Move to Secondary Pages
-
-这些入口已移出底部主导航或计划移出：
-
-- `模板`：已放入 `更多`；后续也可以从 `记录` 链接进入。
-- `设置`：已放入 `更多`；后续应拆成设置中心。
-- `Provider`：后续放入 Settings -> AI。
-- `Agent`：后续放入 Settings -> AI。
-- `WebDAV`：后续放入 Settings -> Sync。
-- `字体`：后续放入 Settings -> Appearance。
-
-### Screen Responsibilities
-
-`AgentScreen` should focus on conversation and pending action cards.
-
-`FocusScreen` should focus on the current timer and record handoff.
-
-`TodoScreen` should focus on daily task operations.
-
-`RecordsScreen` should focus on history, summaries and record-level reflection.
-
-`SettingsScreen` should become a hub page with secondary entries, not one long configuration form.
-
-### Navigation Overview
-
-```mermaid
-flowchart TD
-    Root["ProtatoApp"] --> BottomNav["底部主导航"]
-
-    BottomNav --> TodoTab["任务"]
-    BottomNav --> FocusTab["专注"]
-    BottomNav --> AgentTab["中心对话按钮"]
-    BottomNav --> RecordsTab["记录"]
-    BottomNav --> MoreTab["更多"]
-
-    RecordsTab --> RecordTimeline["番茄时间线"]
-    RecordsTab --> DailySummary["每日总结"]
-    RecordsTab --> TemplateEntry["模板入口"]
-
-    AgentTab --> PendingActions["待确认动作卡片"]
-    FocusTab --> RecordDialog["完成后复盘弹窗"]
-    TodoTab --> TodoFilters["日期和标签筛选"]
-
-    MoreTab --> TemplateManager["模板管理"]
-    MoreTab --> SettingsHub["设置"]
-    SettingsHub --> AiSettings["AI 设置"]
-    SettingsHub --> SyncSettings["同步设置"]
-    SettingsHub --> AppearanceSettings["外观设置"]
-    SettingsHub --> AboutSettings["版本和关于"]
-
-    AiSettings --> ProviderSettings["Provider 管理"]
-    AiSettings --> AgentSettings["Agent 管理"]
-    SyncSettings --> WebDavSettings["WebDAV"]
-    TemplateEntry --> TemplateManager
-```
-
-核心 UI 决策是：日常工作流留在四个一级 tab 中，配置和高级设置进入二级页面。
-
-## Agent Architecture Plan
-
-### Agent Functional Layers
-
-Agent 后续不要扩展成一个“会聊天的大函数”。它应该被拆成从 UI 到执行的多层能力，每一层只回答一个问题：
+Agent 后续不要扩展成一个“会聊天的大函数”。它应该被拆成从 UI 到执行的多层能力，每一层只回答一个问题。
 
 ```mermaid
 flowchart TD
@@ -546,25 +506,11 @@ flowchart TD
     Apply --> Ui
 ```
 
-Layer responsibilities:
+### Where User Meaning Is Determined
 
-- UI layer only renders conversation and pending action cards. It must not build prompts, parse tool JSON, or directly perform complex `AppState` mutations.
-- Session layer receives events such as `SendMessage`, `ConfirmAction`, `RejectAction` and keeps transient pending actions.
-- Intent resolver decides what the user likely means before prompt construction.
-- Context builder decides what data the Agent is allowed to see.
-- Memory retrieval links current conversation with relevant prior todos, records, summaries and conversation facts.
-- Prompt builder formats instructions and context. It does not decide whether a command is legal.
-- Action parser accepts only supported command envelopes and rejects unknown tools.
-- Domain validation is the final business guard before any state mutation.
-- State application happens only after explicit user confirmation for mutating actions.
+“明确知道用户的意思”的层不应该是 UI，也不应该是 prompt，更不应该是工具 JSON parser。
 
-The important boundary is: Agent can propose actions; domain and state decide whether those actions can be applied.
-
-### Intent Resolver
-
-The layer that determines "what the user means" is the intent resolver. It should be explicit because prompt text alone is not a reliable control boundary.
-
-Proposed component:
+建议由 `AgentIntentResolver` 承担：
 
 ```kotlin
 class AgentIntentResolver {
@@ -572,7 +518,7 @@ class AgentIntentResolver {
 }
 ```
 
-Input:
+输入：
 
 ```kotlin
 data class AgentIntentRequest(
@@ -584,7 +530,7 @@ data class AgentIntentRequest(
 )
 ```
 
-Output:
+输出：
 
 ```kotlin
 data class AgentIntentResult(
@@ -594,94 +540,28 @@ data class AgentIntentResult(
 )
 ```
 
-The intent resolver should combine:
-
-- The current user text.
-- Recent conversation turns.
-- Current pending actions.
-- A small summary of relevant todos, records and memory.
-- Current date/time for phrases such as "today", "tomorrow" and "next week".
-
-It must not:
-
-- Modify `AppState`.
-- Call the LLM directly in the first implementation.
-- Parse or apply tool calls.
-- Read API keys, WebDAV credentials or full persistent state.
-
-Low-confidence intent should become a clarification question instead of a guessed command. For example, if the user says "就按第二个来" and no pending action exists, the resolver should return `AskClarification` instead of pretending to know what "第二个" means.
-
-Recommended first implementation:
-
-- Use deterministic keyword and conversation-state rules.
-- Add unit tests for ambiguous messages.
-- Return confidence.
-- Route low confidence to `AskClarification`.
-- Add model-assisted intent classification only after the deterministic interface is stable.
-
-Examples:
-
-| User input | Context | Intent |
-| --- | --- | --- |
-| `明天帮我安排一下论文和健身` | no pending action | `PlanTodos(rawGoal = "...")` |
-| `把写周报改到下午四点提醒` | todo title matches existing todo | `UpdateTodo(targetHint = "写周报", changeHint = "下午四点提醒")` |
-| `我最近是不是晚上效率低` | record permission enabled | `SummarizeRecords(rangeHint = "最近")` |
-| `可以，就这样` | one pending action exists | `ConfirmPendingAction(targetHint = null)` |
-| `可以，就这样` | no pending action exists | `AskClarification(question = "...")` |
-
-This layer is the main answer to "where do we know the user's meaning": not in UI, not in prompt, not in parser, but in `AgentIntentResolver`, with context and clarification policy as support.
+第一版用确定性规则即可。低置信度不要猜，应该变成 clarification question。例如用户说“就按第二个来”，但当前没有 pending action，就应该询问用户指的是哪一个，而不是假装知道。
 
 ### Agent Pipeline
 
-把当前直接 prompt-to-reply 的流程替换成有边界的 Agent 管线：
-
 ```text
 User message
-  -> IntentClassifier
+  -> AgentIntentResolver
   -> AgentContextBuilder
+  -> AgentMemoryRetriever
   -> AgentPromptBuilder
   -> LlmClient
   -> AgentActionParser
   -> UI confirmation or plain reply
+  -> domain/state apply after confirmation
 ```
 
-```mermaid
-flowchart TD
-    Message["用户消息"] --> Intent["IntentClassifier"]
-    Intent --> PermissionGate["权限裁剪"]
-    PermissionGate --> Retriever["上下文检索"]
+核心原则：
 
-    Retriever --> TodoContext["相关待办"]
-    Retriever --> RecordContext["相关复盘记录"]
-    Retriever --> MemoryContext["相关记忆"]
-    Retriever --> ConversationContext["相关对话历史"]
-
-    TodoContext --> ContextPack["AgentContext"]
-    RecordContext --> ContextPack
-    MemoryContext --> ContextPack
-    ConversationContext --> ContextPack
-
-    ContextPack --> Prompt["AgentPromptBuilder"]
-    Intent --> Prompt
-    Prompt --> Llm["LlmClient"]
-    Llm --> RawReply["模型原始回复"]
-    RawReply --> Parser["AgentActionParser"]
-
-    Parser --> Reply["Reply"]
-    Parser --> TodoDrafts["ProposeTodos"]
-    Parser --> TodoEdits["ProposeTodoUpdates"]
-    Parser --> Clarify["AskClarification"]
-
-    Reply --> ChatUi["聊天气泡"]
-    Clarify --> ChatUi
-    TodoDrafts --> ConfirmCard["UI 确认卡片"]
-    TodoEdits --> ConfirmCard
-    ConfirmCard --> StateEvent["state 事件"]
-    StateEvent --> DomainApply["domain 校验并应用"]
-    DomainApply --> Save["data 保存 AppState"]
-```
-
-这张图是 Agent 的核心边界：模型只能提出动作，不能直接修改状态。权限裁剪发生在 prompt 构造之前，domain 校验发生在状态变更之前。
+- 模型只能提出动作，不能直接修改状态。
+- 权限裁剪发生在 prompt 构造之前。
+- domain 校验发生在状态变更之前。
+- mutating action 必须经过 UI 确认。
 
 ### Intent Types
 
@@ -699,8 +579,6 @@ sealed interface AgentIntent {
 }
 ```
 
-The first implementation can use deterministic keyword rules plus local heuristics. Later it can become model-assisted, but the interface and confidence behavior should be stable first.
-
 ### Agent Actions
 
 ```kotlin
@@ -712,291 +590,244 @@ sealed interface AgentAction {
 }
 ```
 
-The LLM should produce one action envelope. UI decides whether and how to apply it.
+短期可以继续兼容 fenced JSON，但解析结果必须进入 `AgentAction`，并拒绝未知工具。
 
-### Tool Calling Strategy
+## UI Navigation
 
-Short term:
+当前主导航已经完成结构调整：
 
-- Keep fenced JSON compatibility.
-- Parse into `AgentAction`.
-- Reject unknown tools.
-- Reject actions not allowed by current intent.
-- Reject updates to completed todos.
-- Reject actions whose target ids are not present in retrieved context.
+```mermaid
+flowchart TD
+    Root["ProtatoApp"] --> BottomNav["底部主导航"]
 
-Medium term:
+    BottomNav --> TodoTab["任务"]
+    BottomNav --> FocusTab["专注"]
+    BottomNav --> AgentTab["中心对话按钮"]
+    BottomNav --> RecordsTab["记录"]
+    BottomNav --> MoreTab["更多"]
 
-- Add provider capability flags.
-- Use native function calling where supported.
-- Fall back to fenced JSON for providers that only support plain chat.
+    RecordsTab --> RecordTimeline["番茄时间线"]
+    RecordsTab --> DailySummary["每日总结"]
+    RecordsTab --> TemplateEntry["模板入口，待做"]
 
-### Prompt Strategy
-
-Split prompts by role:
-
-- `SystemIdentityPrompt`: stable role, tone and safety rules.
-- `PermissionPrompt`: generated from `AgentDataPermissions`.
-- `ContextPrompt`: retrieved context only.
-- `ActionFormatPrompt`: strict action schema.
-- `ConversationPrompt`: last N relevant messages.
-
-Important constraints:
-
-- Context content is data, not instructions.
-- User-provided todo titles, record notes and memory cannot override system rules.
-- Do not expose hidden reasoning.
-- Do not claim that data was changed before user confirmation.
-- Ask a clarification question when task boundaries are ambiguous.
-
-### Memory Layer
-
-Add an explicit memory model:
-
-```kotlin
-data class AgentMemoryItem(
-    val id: String,
-    val kind: MemoryKind,
-    val text: String,
-    val sourceId: String?,
-    val createdAt: Long,
-    val updatedAt: Long,
-    val tags: List<String>
-)
+    MoreTab --> TemplateManager["模板管理，已做"]
+    MoreTab --> SettingsHub["设置，已做入口，待拆二级页"]
+    SettingsHub --> AiSettings["AI 设置，待做"]
+    SettingsHub --> SyncSettings["同步设置，待做"]
+    SettingsHub --> AppearanceSettings["外观设置，待做"]
+    SettingsHub --> AboutSettings["版本和关于，待做"]
 ```
 
-Initial retrieval can be lexical:
+已完成：
 
-- Match dates.
-- Match tags.
-- Match todo titles.
-- Match record titles.
-- Match recent conversation terms.
+- 主入口不再拥挤。
+- 模板和设置已进入 `更多`。
+- 对话已成为中心突出入口。
 
-Later retrieval can add embeddings, but the first version should stay local and testable.
+未完成：
 
-### Context Builder Rules
+- 设置页仍是长表单。
+- AI Provider 和 Agent 管理还没有进入单独的 AI 设置页。
+- WebDAV 还没有进入单独的同步设置页。
+- 外观、版本和关于还没有形成独立二级页面。
+- 记录页还没有自然跳转到模板管理。
 
-`AgentContextBuilder` must take:
+## Refactor Roadmap
 
-- Current user message.
-- Current date.
-- AppState snapshot.
-- Agent permissions.
-- Intent.
+### Phase A: Clean Current Large AI Files
 
-It must return:
+优先级：P0
 
-- Today relevant todos.
-- Matched historical todos.
-- Matched records.
-- Relevant conversation turns.
-- Relevant memory items.
+范围：
 
-It must not return:
+- `ai/AgentLogic.kt`。已完成基础职责拆分。
+- `ai/TodoAiLogic.kt`。已完成基础职责拆分。
 
-- Data disallowed by permissions.
-- Entire 365-day history by default.
-- API keys or WebDAV credentials.
+验收：
 
-## Refactor Phases
+- prompt、context、parser、fallback 分文件。已完成。
+- Todo AI 的服务、计划解析、文本解析、日期推断和元数据推断分文件。已完成。
+- Agent action 有明确结构。已完成第一版。
+- `AgentActionParserTest` 覆盖工具解析基础路径。已完成第一版。
+- `AgentIntentResolver` 有第一版确定性意图层。已完成。
+- 权限真正影响上下文。已完成第一版。
+- `AgentContextBuilderTest` 覆盖权限裁剪。已完成第一版。
+- 编译通过。已完成。
 
-### Phase 0: Safety Baseline
+### Phase B: Add State Layer
 
-Goal: create tests before moving behavior.
+优先级：P0
 
-Tasks:
+范围：
 
-- Add unit tests for todo draft parsing.
-- Add unit tests for agent tool parsing.
-- Add unit tests for date and reminder parsing.
-- Add store load/save round-trip tests.
-- Add sample JSON fixtures for old state versions.
+- `ProtatoApp.kt`
+- 各 screen 的顶层事件入口。
 
-Acceptance:
+验收：
 
-- Existing behavior is captured before extraction.
-- Refactor can move code without guessing expected behavior.
+- `ProtatoApp.kt` 不再直接承载大量业务协调。部分完成：保存、revision 和提醒同步已迁出。
+- UI 通过事件表达用户操作。部分完成：Todo 基础操作、记录更新、每日总结保存、模板管理和设置基础操作已迁出。
+- 存储、AI、平台副作用由 state 层统一协调。未完成：计时服务、同步请求和多数页面事件仍在 app shell。
 
-### Phase 1: Extract Models
+### Phase C: Extract Domain Use Cases
 
-Goal: move data classes out of `ProtatoModels.kt` into `model/`.
+优先级：P1
 
-Tasks:
+范围：
 
-- Split timer, todo, record, template, agent and sync models.
-- Keep public names stable.
-- Avoid behavior changes.
+- todo
+- timer
+- record
+- template
 
-Acceptance:
+验收：
 
-- No UI code imports JSON or storage through model files.
-- Compile passes.
+- 核心业务规则不依赖 Compose。
+- 可补单元测试。
 
-### Phase 2: Extract AI Module
+### Phase D: Continue UI Split
 
-Goal: isolate prompt, context, LLM and tool parsing.
+优先级：P1
 
-Tasks:
+范围：
 
-- Move `requestLlmChat` into `ai/LlmClient.kt`.
-- Move provider helpers into `ai/LlmProviderCatalog.kt`.
-- Move prompt builders into `ai/AgentPromptBuilder.kt`.
-- Move context assembly into `ai/AgentContextBuilder.kt`.
-- Move tool parsing into `ai/AgentActionParser.kt`.
-- Add permission enforcement in context builder.
+- `TodoScreen.kt`
+- `SettingsCards.kt`
+- `AgentScreen.kt`
+- `FocusScreen.kt`
+- `RecordDialogs.kt`
 
-Acceptance:
+验收：
 
-- `AgentScreen` does not build prompts directly.
-- Agent permissions actually control context.
-- Unknown or out-of-context tool targets are rejected.
+- 单个 UI 文件不再承担整页所有区域。部分完成：Todo 筛选区和 TodoRow 已拆出。
+- 设置页成为二级设置中心。
 
-### Phase 3: Extract Domain Use Cases
+### Phase E: Data Safety
 
-Goal: move business logic out of Compose.
+优先级：P2
 
-Tasks:
+范围：
 
-- Create todo reducers/use cases for add, edit, delete, batch delete and completion.
-- Create timer reducer for start, pause, resume, reset and complete.
-- Create record use cases for save, edit and daily summary fallback.
-- Keep Android notification calls outside pure reducers.
+- `ProtatoStore.kt`
+- `SecretStore`
+- migration
+- backup policy
 
-Acceptance:
+验收：
 
-- Core mutations are testable without Compose.
-- UI event handlers become thin.
+- store 不再包含 JSON 编解码细节。已完成第一版：`ProtatoStore.kt` 只保留文件 I/O。
+- JSON 编解码有 round-trip 测试。已完成第一版：`AppStateJsonCodecTest`。
+- load 有明确结果类型。已完成第一版：`ProtatoStoreLoadResult` 和 `ProtatoStoreTest`。
+- 敏感本地状态不进入 Android 备份。已完成第一版：`backup_rules.xml`、`data_extraction_rules.xml` 和 `BackupRulesTest`。
+- 主 AppState JSON 不保存明文密钥。已完成第一版：`ProtatoStore.save()` 会脱敏并写入 `SecretStore`。
+- SecretStore 仍需加密实现。
+- save 失败处理仍需明确。
+- 旧数据迁移需继续从 codec 中拆出。
 
-### Phase 4: Extract UI Screens
+### Phase F: Memory Layer
 
-Status: partial.
+优先级：P2
 
-Goal: split Compose screens by feature.
+范围：
 
-Tasks:
+- `AgentMemoryItem`
+- memory extraction
+- memory retrieval
+- memory management UI
 
-- Move theme to `ui/ProtatoTheme.kt`. Done.
-- Move navigation to `ui/AppNavigation.kt`. Partially done: main tab enum and bottom bar live there.
-- Move each screen into `ui/screens/...`.
-- Move repeated UI elements into `ui/components/`.
+验收：
 
-Acceptance:
+- Agent 能引用相关历史，而不是读取全部历史。
+- 用户能查看和删除记忆。
 
-- `MainActivity.kt` only creates the activity and calls `ProtatoApp`.
-- `ProtatoApp.kt` owns top-level state and navigation glue.
-- No single UI file exceeds a reasonable feature boundary.
+## Feature Readiness
 
-### Phase 5: Redesign Navigation
+当前已经可以较安全地添加的功能：
 
-Status: partial / 部分完成。
+- 纯 UI 展示类小功能，例如列表筛选显示、空状态、设置项说明、入口调整。
+- 不改变核心状态流的页面整理，例如把设置页继续拆成二级页面。
+- 不涉及长期记忆和复杂批量状态变更的轻量交互。
+- 小型 AppState 功能可以开始，但必须通过对应事件族、reducer 和 holder 测试接入，避免继续扩大 `ProtatoApp.kt`。
+- Todo、Records、Template、Settings 和 Focus/timer 相关小功能可以开始添加，优先通过新增 `ProtatoEvent`、对应 reducer 和 holder 测试落地。
+- Agent 提案类功能可以开始小步添加，例如新增一种只生成草案、需要用户确认的建议卡片。
+- Agent 单轮回复/草案生成的小功能可以开始添加，但应优先改 `AgentTurnService`、`AgentActionParser` 和 reducer 测试，而不是改 Compose。
+- Agent pending action 展示/确认的小功能可以开始添加，但应优先改 `AgentSessionState` 和 `AgentEventReducer`，再薄改 UI。
 
-Goal: reduce bottom navigation crowding / 降低底部导航拥挤程度。
+建议暂缓的新功能：
 
-Tasks:
+- Agent 自动落地修改待办、复盘或设置。
+- 长期记忆、历史检索、跨对话联动。
+- 复杂同步、迁移、密钥安全相关功能。数据层已开始拆分，load result、备份排除和 SecretStore 文件分离已有第一版，但这些能力仍需要加密 SecretStore 和更完整 migration 后再做。
+- 大范围状态流功能，例如全局撤销、跨页面任务流、批量自动规划。
 
-- Change bottom nav to centered Agent plus side entries: `任务 / 专注 / 对话 / 记录 / 更多`. Done.
-- Add `更多` as the first secondary-entry page. Done.
-- Move Template management under `更多`. Done.
-- Move Settings under `更多`. Done.
-- Add Settings hub as secondary page. Not started.
-- Add Records -> Template management entry. Not started.
-- Move Provider and Agent management under Settings -> AI. Not started.
-- Move sync settings under Settings -> Sync. Not started.
+推荐门槛：
 
-Acceptance:
-
-- Main workflow fits one-handed mobile use. Done.
-- Advanced configuration no longer competes with daily workflow. Partially done: template/settings moved; settings internals still need secondary pages.
-
-### Phase 6: Secure Secrets and Backup Policy
-
-Goal: reduce credential exposure.
-
-Tasks:
-
-- Move provider API keys and WebDAV app password into encrypted storage.
-- Store only secret aliases or ids in app state JSON.
-- Review `android:allowBackup` and exclude sensitive state if backup remains enabled.
-
-Acceptance:
-
-- Exported/synced JSON never contains credentials.
-- Local state backup does not include raw secrets.
-
-### Phase 7: Improve Memory Layer
-
-Goal: make conversation, todos and records genuinely connected.
-
-Tasks:
-
-- Add `AgentMemoryItem`.
-- Add deterministic memory extraction from confirmed actions and saved summaries.
-- Add retrieval by date, tag, title and recent conversation terms.
-- Add UI for reviewing and deleting memory.
-
-Acceptance:
-
-- Agent can reference relevant prior plans without receiving all history.
-- User can inspect and control stored memory.
-
-## Migration Strategy
-
-Prefer small pull requests or commits:
-
-1. Tests and fixtures only.
-2. Model extraction only.
-3. AI module extraction only.
-4. Domain reducers only.
-5. UI file split only.
-6. Navigation redesign.
-7. Secret storage.
-8. Memory layer.
-
-Avoid mixing behavior changes with file moves. When behavior must change, isolate it behind tests and document it in the commit message.
+- 想加普通 UI/体验功能：现在可以开始，但仍要小步做。
+- 想加 Agent 提案类功能：现在可以开始，但必须走 `AgentIntent`、`AgentAction`、权限裁剪和用户确认。
+- 想加 Agent 记忆类功能：先完成 `AgentMemoryItem`、memory retrieval 和记忆管理入口。
+- 想加影响 Todo、Records、DailySummary、Template、基础 Settings 或 Focus/timer 的小功能：现在可以开始，但应补对应事件族 reducer 和 state holder 测试。
+- 想加影响 AppState 的跨模块核心功能：先建立对应事件族 reducer、`ProtatoEffect` 或 domain use case，避免把异步副作用继续放大在 `ProtatoApp.kt`。
+- 想加数据安全或同步增强：`ProtatoStore.kt` 已完成 store/codec/load result 第一版，备份排除和 SecretStore 文件分离已落地，下一步先接加密 SecretStore 和更完整 migration。
 
 ## Testing Strategy
 
-Minimum test coverage before major refactor:
+优先补这些测试：
 
-- `AgentActionParserTest`
+- `AgentActionParserTest`。已完成第一版。
 - `AgentContextBuilderTest`
+- `ProtatoStateHolderTest`。已覆盖 Todo、记录、每日总结、模板、设置和 Focus/timer 事件。
+- `AppStateJsonCodecTest`。已覆盖非空 AppState round-trip 和最小 JSON 默认结构。
+- `ProtatoStoreTest`。已覆盖缺失、成功、恢复、失败读取结果、secret 分离保存和旧明文迁出。
+- `BackupRulesTest`。已覆盖 Manifest 引用和本地状态文件备份排除规则。
 - `TodoParserTest`
 - `TimerSessionReducerTest`
-- `ProtatoStoreRoundTripTest`
-- `StateMigrationTest`
+- 更完整的 `StateMigrationTest`
 
-Manual QA checklist:
+手动 QA：
 
-- Start, pause, resume and reset timer.
-- Complete focus session and save record.
-- Create, edit, complete and delete todos.
-- Add reminder and verify alarm scheduling.
-- Generate todo drafts through Agent.
-- Reject and accept Agent todo proposals.
-- Generate daily summary.
-- Configure provider without losing existing API key.
-- Sync to WebDAV with test credentials.
+- 启动、暂停、继续、重置计时。
+- 完成专注并保存复盘记录。
+- 新建、编辑、完成、删除待办。
+- 设置提醒并验证闹钟调度。
+- 通过 Agent 生成 todo 草案。
+- 拒绝和接受 Agent todo 提案。
+- 生成每日总结。
+- 配置 provider 后不丢失已有 key。
+- 使用测试凭据同步 WebDAV。
 
-## Non-Goals for the First Refactor
+## Non Goals
 
-- Replacing JSON storage with Room.
-- Adding embeddings.
-- Rewriting all UI visuals.
-- Supporting every provider-specific tool calling API.
-- Adding account login or remote backend.
+第一阶段不做：
 
-These can come later. The first refactor should make the existing app easier to change without changing its product surface too much.
+- 把 JSON 存储替换成 Room。
+- 引入 embedding。
+- 重写全部 UI 视觉。
+- 支持所有 provider 的原生 tool calling。
+- 增加账号体系或远端后端。
+
+## Duplicate Content Cleanup
+
+这次整理合并或删除了以下重复内容：
+
+- `Progress`、`Refactor Phases`、`Definition of Done` 中重复出现的 `MainActivity.kt` 瘦身描述，合并到 `Current Snapshot`。
+- `Still Open` 和各 Phase 中重复的待办项，合并到 `Remaining Work`。
+- 旧的 `Current Problems -> Oversized Entry File` 已过期，因为 `MainActivity.kt` 已完成拆分；改为用 `Current Large Files` 记录当前真实风险。
+- 底部导航的设计、状态和验收描述重复出现多次，合并到 `UI Navigation`。
+- Agent 的功能层、pipeline、intent、action 和 memory 描述原本分散且部分重复，合并到 `Agent Architecture`。
+- “模块契约”的解释和依赖方向保留，但压缩为每个模块的允许/禁止事项。
+- 已完成的历史操作保留结果，不再逐条保留过程日志。
 
 ## Definition of Done
 
-The refactor is successful when:
+重构整体完成时应满足：
 
-- `MainActivity.kt` is reduced to activity setup only.
-- Top-level app state and navigation live outside `MainActivity`.
-- AI prompt and tool parsing are in `ai/`.
-- Agent context respects permissions.
-- UI no longer has 6 bottom navigation items. Done.
-- Secrets are not stored in plain JSON.
-- Core business logic has unit tests.
-- New features can be added by touching one feature module instead of the whole app.
+- `MainActivity.kt` 只负责 Activity setup。已完成。
+- 主导航不再有 6 个底部入口。已完成。
+- `ProtatoApp.kt` 不再承担主要业务协调。
+- `state/` 层接管事件、保存、AI、同步和平台副作用协调。
+- `domain/` 层承载可测试业务规则。
+- `ai/` 层完成 prompt、context、intent、action parser 和 memory 的边界拆分。
+- Agent context 严格遵守权限和相关性裁剪。
+- secrets 不再存储在普通 JSON 中。
+- 核心业务逻辑有单元测试。
+- 新功能可以落到对应 feature/module，而不是回到大文件堆叠。

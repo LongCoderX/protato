@@ -15,6 +15,10 @@ data class LlmChatMessage(
     val content: String
 )
 
+internal fun LlmProviderSettings.isConfiguredForChat(): Boolean {
+    return endpoint.isNotBlank() && modelName.isNotBlank() && apiKey.isNotBlank()
+}
+
 suspend fun fetchLlmModels(endpoint: String, apiKey: String): List<String> {
     return withContext(Dispatchers.IO) {
         val connection = (URL(normalizeModelsEndpoint(endpoint)).openConnection() as HttpURLConnection).apply {

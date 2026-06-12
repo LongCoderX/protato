@@ -1,5 +1,6 @@
 package com.protato.app
 
+import com.protato.app.util.*
 enum class TimerMode {
     Focus,
     Break
