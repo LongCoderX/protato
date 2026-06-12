@@ -7,6 +7,7 @@ app/build/
 # Local configuration
 local.properties
 .android-sdk/
+.codex/
 .omc/
 
 # Android Studio / IntelliJ

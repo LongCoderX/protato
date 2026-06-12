@@ -6,6 +6,36 @@ Protato 已经具备完整的产品雏形：待办、番茄计时、复盘记录
 
 本计划先定义重构方向，再进入代码拆分。目标是让后续功能可以在清晰模块内演进，而不是继续扩大 `MainActivity.kt`。
 
+## Progress
+
+### Completed
+
+- `ui/ProtatoTheme.kt` 已从 `MainActivity.kt` 抽出。
+- `ui/AppNavigation.kt` 已承载主导航枚举和自定义底栏。
+- `ai/LlmClient.kt` 已承载 LLM chat 请求、模型列表请求和基础响应解析。
+- 底部导航已从 6 个入口收敛为中心突出式 Agent 入口：
+  - 左侧：`任务`、`专注`
+  - 中心：圆形突出的 `对话`
+  - 右侧：`记录`、`更多`
+- `模板` 和 `设置` 已从底部主导航移入 `更多` 二级入口。
+- `模板` 和 `设置` 二级页面已增加返回入口。
+- 已清理 `Icons.Outlined.Label` deprecation warning，改用 AutoMirrored 图标。
+
+### Verified
+
+- `JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ./gradlew :app:assembleDebug` 构建通过。
+
+### Still Open
+
+- `MainActivity.kt` 仍然承担大量 UI、状态协调和业务逻辑，尚未达到只负责 Activity setup 的目标。
+- `state/` 层尚未建立，Compose 页面仍直接协调大量 `AppState` mutation。
+- `domain/` 层尚未建立，计时、待办、记录等业务规则仍分散在 UI 文件中。
+- Agent prompt、上下文构造、工具解析尚未完全抽入 `ai/`。
+- Agent 权限裁剪和记忆检索层尚未落地。
+- 设置页仍是长表单，尚未拆成 AI、同步、外观等二级设置页。
+- SecretStore 和备份策略尚未实现。
+- 自动化测试基线尚未补齐。
+
 ## Current Problems
 
 ### Oversized Entry File
@@ -410,23 +440,24 @@ data -> ui
 
 ### New Primary Navigation
 
-Use 4 primary tabs:
+当前已实现的导航使用四个侧边入口加一个中心 Agent 按钮：
 
-- `对话`: planning, daily assistant and memory-aware conversation.
-- `专注`: timer, current task binding, record-after-completion flow.
-- `任务`: dated todo list, filters, batch actions.
-- `记录`: timeline, summaries, record chat.
+- `任务`：日期待办、筛选和批量操作。
+- `专注`：计时、当前任务绑定和番茄结束复盘。
+- `对话`：中心圆形 Agent 入口，负责计划、日程助手和记忆化对话。
+- `记录`：番茄时间线、每日总结和记录对话。
+- `更多`：低频二级入口。
 
 ### Move to Secondary Pages
 
-Move these out of bottom navigation:
+这些入口已移出底部主导航或计划移出：
 
-- `模板`: accessible from Records and Settings.
-- `设置`: accessible from top app bar or overflow menu.
-- `Provider`: under Settings -> AI.
-- `Agent`: under Settings -> AI.
-- `WebDAV`: under Settings -> Sync.
-- `字体`: under Settings -> Appearance.
+- `模板`：已放入 `更多`；后续也可以从 `记录` 链接进入。
+- `设置`：已放入 `更多`；后续应拆成设置中心。
+- `Provider`：后续放入 Settings -> AI。
+- `Agent`：后续放入 Settings -> AI。
+- `WebDAV`：后续放入 Settings -> Sync。
+- `字体`：后续放入 Settings -> Appearance。
 
 ### Screen Responsibilities
 
@@ -446,10 +477,11 @@ Move these out of bottom navigation:
 flowchart TD
     Root["ProtatoApp"] --> BottomNav["底部主导航"]
 
-    BottomNav --> AgentTab["对话"]
-    BottomNav --> FocusTab["专注"]
     BottomNav --> TodoTab["任务"]
+    BottomNav --> FocusTab["专注"]
+    BottomNav --> AgentTab["中心对话按钮"]
     BottomNav --> RecordsTab["记录"]
+    BottomNav --> MoreTab["更多"]
 
     RecordsTab --> RecordTimeline["番茄时间线"]
     RecordsTab --> DailySummary["每日总结"]
@@ -459,8 +491,8 @@ flowchart TD
     FocusTab --> RecordDialog["完成后复盘弹窗"]
     TodoTab --> TodoFilters["日期和标签筛选"]
 
-    Root --> TopActions["顶部操作入口"]
-    TopActions --> SettingsHub["设置中心"]
+    MoreTab --> TemplateManager["模板管理"]
+    MoreTab --> SettingsHub["设置"]
     SettingsHub --> AiSettings["AI 设置"]
     SettingsHub --> SyncSettings["同步设置"]
     SettingsHub --> AppearanceSettings["外观设置"]
@@ -469,12 +501,124 @@ flowchart TD
     AiSettings --> ProviderSettings["Provider 管理"]
     AiSettings --> AgentSettings["Agent 管理"]
     SyncSettings --> WebDavSettings["WebDAV"]
-    TemplateEntry --> TemplateManager["模板管理"]
+    TemplateEntry --> TemplateManager
 ```
 
 核心 UI 决策是：日常工作流留在四个一级 tab 中，配置和高级设置进入二级页面。
 
 ## Agent Architecture Plan
+
+### Agent Functional Layers
+
+Agent 后续不要扩展成一个“会聊天的大函数”。它应该被拆成从 UI 到执行的多层能力，每一层只回答一个问题：
+
+```mermaid
+flowchart TD
+    Ui["1. Agent UI layer\n展示消息、输入框、确认卡片"]
+    Session["2. Agent session layer\n管理本轮对话、loading、pending action"]
+    Intent["3. Intent resolver\n判断用户想聊天、规划、修改、查询还是确认"]
+    Context["4. Context builder\n按权限和相关性裁剪 AppState"]
+    Memory["5. Memory retrieval\n检索相关历史对话、待办、复盘洞察"]
+    Prompt["6. Prompt builder\n组装规则、上下文、命令格式和消息"]
+    Parser["7. Action parser\n把模型输出解析成结构化 AgentAction"]
+    Domain["8. Domain validation\n校验 todoId、重复、完成状态、字段合法性"]
+    Apply["9. State application\n用户确认后修改 AppState 并保存"]
+
+    Ui --> Session
+    Session --> Intent
+    Intent --> Context
+    Context --> Memory
+    Memory --> Prompt
+    Prompt --> Parser
+    Parser --> Domain
+    Domain --> Apply
+    Apply --> Ui
+```
+
+Layer responsibilities:
+
+- UI layer only renders conversation and pending action cards. It must not build prompts, parse tool JSON, or directly perform complex `AppState` mutations.
+- Session layer receives events such as `SendMessage`, `ConfirmAction`, `RejectAction` and keeps transient pending actions.
+- Intent resolver decides what the user likely means before prompt construction.
+- Context builder decides what data the Agent is allowed to see.
+- Memory retrieval links current conversation with relevant prior todos, records, summaries and conversation facts.
+- Prompt builder formats instructions and context. It does not decide whether a command is legal.
+- Action parser accepts only supported command envelopes and rejects unknown tools.
+- Domain validation is the final business guard before any state mutation.
+- State application happens only after explicit user confirmation for mutating actions.
+
+The important boundary is: Agent can propose actions; domain and state decide whether those actions can be applied.
+
+### Intent Resolver
+
+The layer that determines "what the user means" is the intent resolver. It should be explicit because prompt text alone is not a reliable control boundary.
+
+Proposed component:
+
+```kotlin
+class AgentIntentResolver {
+    fun resolve(request: AgentIntentRequest): AgentIntentResult
+}
+```
+
+Input:
+
+```kotlin
+data class AgentIntentRequest(
+    val userText: String,
+    val recentMessages: List<AgentConversationMessage>,
+    val pendingActions: List<PendingAgentAction>,
+    val contextSummary: AgentContextSummary,
+    val nowMillis: Long
+)
+```
+
+Output:
+
+```kotlin
+data class AgentIntentResult(
+    val intent: AgentIntent,
+    val confidence: Float,
+    val reason: String
+)
+```
+
+The intent resolver should combine:
+
+- The current user text.
+- Recent conversation turns.
+- Current pending actions.
+- A small summary of relevant todos, records and memory.
+- Current date/time for phrases such as "today", "tomorrow" and "next week".
+
+It must not:
+
+- Modify `AppState`.
+- Call the LLM directly in the first implementation.
+- Parse or apply tool calls.
+- Read API keys, WebDAV credentials or full persistent state.
+
+Low-confidence intent should become a clarification question instead of a guessed command. For example, if the user says "就按第二个来" and no pending action exists, the resolver should return `AskClarification` instead of pretending to know what "第二个" means.
+
+Recommended first implementation:
+
+- Use deterministic keyword and conversation-state rules.
+- Add unit tests for ambiguous messages.
+- Return confidence.
+- Route low confidence to `AskClarification`.
+- Add model-assisted intent classification only after the deterministic interface is stable.
+
+Examples:
+
+| User input | Context | Intent |
+| --- | --- | --- |
+| `明天帮我安排一下论文和健身` | no pending action | `PlanTodos(rawGoal = "...")` |
+| `把写周报改到下午四点提醒` | todo title matches existing todo | `UpdateTodo(targetHint = "写周报", changeHint = "下午四点提醒")` |
+| `我最近是不是晚上效率低` | record permission enabled | `SummarizeRecords(rangeHint = "最近")` |
+| `可以，就这样` | one pending action exists | `ConfirmPendingAction(targetHint = null)` |
+| `可以，就这样` | no pending action exists | `AskClarification(question = "...")` |
+
+This layer is the main answer to "where do we know the user's meaning": not in UI, not in prompt, not in parser, but in `AgentIntentResolver`, with context and clarification policy as support.
 
 ### Agent Pipeline
 
@@ -532,15 +676,19 @@ flowchart TD
 
 ```kotlin
 sealed interface AgentIntent {
-    data object ChatOnly : AgentIntent
-    data object PlanTodos : AgentIntent
-    data object UpdateTodos : AgentIntent
-    data object SummarizeRecords : AgentIntent
-    data object AskClarification : AgentIntent
+    data class Chat(val topic: String?) : AgentIntent
+    data class PlanTodos(val rawGoal: String) : AgentIntent
+    data class UpdateTodo(val targetHint: String, val changeHint: String) : AgentIntent
+    data class QueryTodos(val query: String) : AgentIntent
+    data class SuggestNextFocus(val constraint: String?) : AgentIntent
+    data class SummarizeRecords(val rangeHint: String?) : AgentIntent
+    data class ConfirmPendingAction(val targetHint: String?) : AgentIntent
+    data class RejectPendingAction(val targetHint: String?) : AgentIntent
+    data class AskClarification(val question: String) : AgentIntent
 }
 ```
 
-The first implementation can use deterministic keyword rules plus local heuristics. Later it can become model-assisted.
+The first implementation can use deterministic keyword rules plus local heuristics. Later it can become model-assisted, but the interface and confidence behavior should be stable first.
 
 ### Agent Actions
 
@@ -711,12 +859,14 @@ Acceptance:
 
 ### Phase 4: Extract UI Screens
 
+Status: partial.
+
 Goal: split Compose screens by feature.
 
 Tasks:
 
-- Move theme to `ui/ProtatoTheme.kt`.
-- Move navigation to `ui/AppNavigation.kt`.
+- Move theme to `ui/ProtatoTheme.kt`. Done.
+- Move navigation to `ui/AppNavigation.kt`. Partially done: main tab enum and bottom bar live there.
 - Move each screen into `ui/screens/...`.
 - Move repeated UI elements into `ui/components/`.
 
@@ -728,20 +878,25 @@ Acceptance:
 
 ### Phase 5: Redesign Navigation
 
-Goal: reduce bottom navigation crowding.
+Status: partial / 部分完成。
+
+Goal: reduce bottom navigation crowding / 降低底部导航拥挤程度。
 
 Tasks:
 
-- Change bottom nav to 4 primary tabs.
-- Add Settings hub as secondary page.
-- Move Template management under Records/Settings.
-- Move Provider and Agent management under Settings -> AI.
-- Move sync settings under Settings -> Sync.
+- Change bottom nav to centered Agent plus side entries: `任务 / 专注 / 对话 / 记录 / 更多`. Done.
+- Add `更多` as the first secondary-entry page. Done.
+- Move Template management under `更多`. Done.
+- Move Settings under `更多`. Done.
+- Add Settings hub as secondary page. Not started.
+- Add Records -> Template management entry. Not started.
+- Move Provider and Agent management under Settings -> AI. Not started.
+- Move sync settings under Settings -> Sync. Not started.
 
 Acceptance:
 
-- Main workflow fits one-handed mobile use.
-- Advanced configuration no longer competes with daily workflow.
+- Main workflow fits one-handed mobile use. Done.
+- Advanced configuration no longer competes with daily workflow. Partially done: template/settings moved; settings internals still need secondary pages.
 
 ### Phase 6: Secure Secrets and Backup Policy
 
@@ -830,7 +985,7 @@ The refactor is successful when:
 - Top-level app state and navigation live outside `MainActivity`.
 - AI prompt and tool parsing are in `ai/`.
 - Agent context respects permissions.
-- UI no longer has 6 bottom navigation items.
+- UI no longer has 6 bottom navigation items. Done.
 - Secrets are not stored in plain JSON.
 - Core business logic has unit tests.
 - New features can be added by touching one feature module instead of the whole app.

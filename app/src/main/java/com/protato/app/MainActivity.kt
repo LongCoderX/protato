@@ -47,6 +47,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Chat
+import androidx.compose.material.icons.automirrored.outlined.Label
 import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.automirrored.outlined.ViewList
@@ -59,7 +60,6 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
-import androidx.compose.material.icons.outlined.Label
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Save
@@ -85,8 +85,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -94,7 +92,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwipeToDismissBox
@@ -103,7 +100,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -125,10 +121,6 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
@@ -136,7 +128,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.ContextCompat.startForegroundService
@@ -144,7 +135,19 @@ import com.protato.app.ai.LlmChatMessage
 import com.protato.app.ai.fetchLlmModels
 import com.protato.app.ai.requestLlmChat
 import com.protato.app.ui.MainTab
+import com.protato.app.ui.ProtatoBottomBar
 import com.protato.app.ui.ProtatoTheme
+import com.protato.app.ui.SecondaryDestination
+import com.protato.app.ui.components.ChatBubble
+import com.protato.app.ui.components.EmptyState
+import com.protato.app.ui.components.Header
+import com.protato.app.ui.components.MarkdownText
+import com.protato.app.ui.components.SecondaryHeader
+import com.protato.app.ui.components.SettingActionRow
+import com.protato.app.ui.screens.more.MoreScreen
+import com.protato.app.ui.screens.settings.FontScaleSettingsCard
+import com.protato.app.ui.screens.settings.NicknameSettingsCard
+import com.protato.app.ui.screens.settings.ProjectVersionCard
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
@@ -274,18 +277,17 @@ fun ProtatoApp() {
 
     ProtatoTheme(fontScale = appState.fontScale) {
         var currentTab by rememberSaveable { mutableStateOf(MainTab.Agent) }
+        var secondaryDestination by rememberSaveable { mutableStateOf<SecondaryDestination?>(null) }
+        fun selectTab(tab: MainTab) {
+            currentTab = tab
+            secondaryDestination = null
+        }
         Scaffold(
             bottomBar = {
-                NavigationBar {
-                    MainTab.entries.forEach { tab ->
-                        NavigationBarItem(
-                            selected = currentTab == tab,
-                            onClick = { currentTab = tab },
-                            icon = { Icon(tab.icon, contentDescription = tab.label) },
-                            label = { Text(tab.label) }
-                        )
-                    }
-                }
+                ProtatoBottomBar(
+                    currentTab = currentTab,
+                    onTabSelected = ::selectTab
+                )
             }
         ) { padding ->
             Surface(
@@ -294,214 +296,243 @@ fun ProtatoApp() {
                     .padding(padding),
                 color = MaterialTheme.colorScheme.background
             ) {
-                when (currentTab) {
-                    MainTab.Agent -> AgentScreen(
-                        appState = appState,
-                        onStateChange = { setAppState(it) }
-                    )
+                if (secondaryDestination != null) {
+                    when (secondaryDestination) {
+                        SecondaryDestination.Templates -> TemplateScreen(
+                            templates = appState.templates,
+                            selectedTemplateId = appState.selectedTemplateId,
+                            providers = appState.llmProviders,
+                            agents = appState.agents,
+                            nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
+                            onSelectedTemplate = { templateId ->
+                                setAppState(appState.copy(selectedTemplateId = templateId))
+                            },
+                            onUpsert = { template ->
+                                val exists = appState.templates.any { it.id == template.id }
+                                val templates = if (exists) {
+                                    appState.templates.map { if (it.id == template.id) template else it }
+                                } else {
+                                    listOf(template) + appState.templates
+                                }
+                                setAppState(
+                                    appState.copy(
+                                        templates = templates,
+                                        selectedTemplateId = template.id
+                                    )
+                                )
+                            },
+                            onDelete = { template ->
+                                val nextTemplates = appState.templates.filterNot { it.id == template.id }.ifEmpty {
+                                    listOf(defaultTemplate())
+                                }
+                                setAppState(
+                                    appState.copy(
+                                        templates = nextTemplates,
+                                        selectedTemplateId = nextTemplates.first().id
+                                    )
+                                )
+                            },
+                            onBack = { secondaryDestination = null }
+                        )
 
-                    MainTab.Focus -> FocusScreen(
-                        appState = appState,
-                        selectedTodoId = selectedTodoId,
-                        selectedTemplate = selectedTemplate,
-                        providers = appState.llmProviders,
-                        agents = appState.agents,
-                        nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
-                        timerMode = timerMode,
-                        remainingSeconds = remainingSeconds,
-                        totalSeconds = totalSeconds,
-                        isRunning = isRunning,
-                        hasPausedSession = hasPausedSession,
-                        pendingRecord = pendingRecord,
-                        onStateChange = { setAppState(it) },
-                        onSelectedTodo = { selectedTodoId = it },
-                        onModeChange = { mode ->
-                            timerMode = mode
-                            setAppState(appState.copy(activeSession = null))
-                            PomodoroAlarmScheduler(context).cancel()
-                            context.startPomodoroService(ACTION_STOP_TIMER_SERVICE)
-                        },
-                        onStartPause = {
-                            if (isRunning) {
-                                activeSession?.let { session ->
-                                    setAppState(
-                                        appState.copy(
-                                            activeSession = session.copy(
-                                                pausedRemainingSeconds = session.remainingSeconds(nowMillis)
+                        SecondaryDestination.Settings -> SettingsScreen(
+                            appState = appState,
+                            appVersionName = BuildConfig.VERSION_NAME,
+                            syncing = syncing,
+                            onSync = ::requestSync,
+                            onStateChange = { setAppState(it) },
+                            onBack = { secondaryDestination = null }
+                        )
+
+                        null -> Unit
+                    }
+                } else {
+                    when (currentTab) {
+                        MainTab.Agent -> AgentScreen(
+                            appState = appState,
+                            onStateChange = { setAppState(it) }
+                        )
+
+                        MainTab.Focus -> FocusScreen(
+                            appState = appState,
+                            selectedTodoId = selectedTodoId,
+                            selectedTemplate = selectedTemplate,
+                            providers = appState.llmProviders,
+                            agents = appState.agents,
+                            nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
+                            timerMode = timerMode,
+                            remainingSeconds = remainingSeconds,
+                            totalSeconds = totalSeconds,
+                            isRunning = isRunning,
+                            hasPausedSession = hasPausedSession,
+                            pendingRecord = pendingRecord,
+                            onStateChange = { setAppState(it) },
+                            onSelectedTodo = { selectedTodoId = it },
+                            onModeChange = { mode ->
+                                timerMode = mode
+                                setAppState(appState.copy(activeSession = null))
+                                PomodoroAlarmScheduler(context).cancel()
+                                context.startPomodoroService(ACTION_STOP_TIMER_SERVICE)
+                            },
+                            onStartPause = {
+                                if (isRunning) {
+                                    activeSession?.let { session ->
+                                        setAppState(
+                                            appState.copy(
+                                                activeSession = session.copy(
+                                                    pausedRemainingSeconds = session.remainingSeconds(nowMillis)
+                                                )
                                             )
                                         )
-                                    )
-                                }
-                                PomodoroAlarmScheduler(context).cancel()
-                                context.stopService(Intent(context, PomodoroTimerService::class.java))
-                            } else {
-                                val startedAt = System.currentTimeMillis()
-                                val session = activeSession?.let { pausedSession ->
-                                    pausedSession.pausedRemainingSeconds?.let { pausedSeconds ->
-                                        pausedSession.copy(
-                                            endsAt = startedAt + pausedSeconds * 1000L,
-                                            pausedRemainingSeconds = null
-                                        )
                                     }
-                                } ?: TimerSession(
-                                    mode = timerMode,
-                                    todoId = selectedTodo?.id,
-                                    todoTitle = selectedTodo?.title ?: "未绑定任务",
-                                    startedAt = startedAt,
-                                    endsAt = startedAt + totalSeconds * 1000L,
-                                    totalSeconds = totalSeconds,
-                                    templateId = selectedTemplate.id
+                                    PomodoroAlarmScheduler(context).cancel()
+                                    context.stopService(Intent(context, PomodoroTimerService::class.java))
+                                } else {
+                                    val startedAt = System.currentTimeMillis()
+                                    val session = activeSession?.let { pausedSession ->
+                                        pausedSession.pausedRemainingSeconds?.let { pausedSeconds ->
+                                            pausedSession.copy(
+                                                endsAt = startedAt + pausedSeconds * 1000L,
+                                                pausedRemainingSeconds = null
+                                            )
+                                        }
+                                    } ?: TimerSession(
+                                        mode = timerMode,
+                                        todoId = selectedTodo?.id,
+                                        todoTitle = selectedTodo?.title ?: "未绑定任务",
+                                        startedAt = startedAt,
+                                        endsAt = startedAt + totalSeconds * 1000L,
+                                        totalSeconds = totalSeconds,
+                                        templateId = selectedTemplate.id
+                                    )
+                                    val nextState = appState.copy(activeSession = session)
+                                    val revisedState = nextState.withNextRevisionFrom(appState)
+                                    appState = revisedState
+                                    store.save(revisedState)
+                                    nowMillis = startedAt
+                                    PomodoroAlarmScheduler(context).schedule(session)
+                                    context.startPomodoroService(ACTION_START_TIMER_SERVICE)
+                                }
+                            },
+                            onReset = {
+                                setAppState(appState.copy(activeSession = null))
+                                PomodoroAlarmScheduler(context).cancel()
+                                context.startPomodoroService(ACTION_STOP_TIMER_SERVICE)
+                            },
+                            onDismissRecord = {
+                                setAppState(appState.copy(pendingRecord = null))
+                                PomodoroNotifications(context).cancelCompleted()
+                            },
+                            onSaveRecord = { record, answers ->
+                                val template = appState.templates.firstOrNull { it.id == record.templateId }
+                                    ?: selectedTemplate
+                                val newRecord = PomodoroRecord(
+                                    id = newId(),
+                                    todoId = record.todoId,
+                                    todoTitle = record.todoTitle,
+                                    templateId = template.id,
+                                    templateName = template.name,
+                                    startedAt = record.startedAt,
+                                    endedAt = record.endedAt,
+                                    focusMinutes = record.focusMinutes,
+                                    answers = answers
                                 )
-                                val nextState = appState.copy(activeSession = session)
-                                val revisedState = nextState.withNextRevisionFrom(appState)
-                                appState = revisedState
-                                store.save(revisedState)
-                                nowMillis = startedAt
-                                PomodoroAlarmScheduler(context).schedule(session)
-                                context.startPomodoroService(ACTION_START_TIMER_SERVICE)
+                                setAppState(
+                                    appState.copy(
+                                        records = listOf(newRecord) + appState.records,
+                                        pendingRecord = null
+                                    )
+                                )
+                                PomodoroNotifications(context).cancelCompleted()
                             }
-                        },
-                        onReset = {
-                            setAppState(appState.copy(activeSession = null))
-                            PomodoroAlarmScheduler(context).cancel()
-                            context.startPomodoroService(ACTION_STOP_TIMER_SERVICE)
-                        },
-                        onDismissRecord = {
-                            setAppState(appState.copy(pendingRecord = null))
-                            PomodoroNotifications(context).cancelCompleted()
-                        },
-                        onSaveRecord = { record, answers ->
-                            val template = appState.templates.firstOrNull { it.id == record.templateId }
-                                ?: selectedTemplate
-                            val newRecord = PomodoroRecord(
-                                id = newId(),
-                                todoId = record.todoId,
-                                todoTitle = record.todoTitle,
-                                templateId = template.id,
-                                templateName = template.name,
-                                startedAt = record.startedAt,
-                                endedAt = record.endedAt,
-                                focusMinutes = record.focusMinutes,
-                                answers = answers
-                            )
-                            setAppState(appState.copy(
-                                records = listOf(newRecord) + appState.records,
-                                pendingRecord = null
-                            ))
-                            PomodoroNotifications(context).cancelCompleted()
-                        }
-                    )
+                        )
 
-                    MainTab.Todo -> TodoScreen(
-                        todos = appState.todos,
-                        providers = appState.llmProviders,
-                        agents = appState.agents,
-                        nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
-                        onAdd = { todo ->
-                            setAppState(appState.copy(
-                                todos = listOf(todo) + appState.todos
-                            ))
-                        },
-                        onToggle = { item ->
-                            val nextCompleted = !item.completed
-                            setAppState(appState.copy(
-                                todos = appState.todos.map {
-                                    if (it.id == item.id) it.copy(completed = nextCompleted) else it
+                        MainTab.Todo -> TodoScreen(
+                            todos = appState.todos,
+                            providers = appState.llmProviders,
+                            agents = appState.agents,
+                            nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
+                            onAdd = { todo ->
+                                setAppState(
+                                    appState.copy(
+                                        todos = listOf(todo) + appState.todos
+                                    )
+                                )
+                            },
+                            onToggle = { item ->
+                                val nextCompleted = !item.completed
+                                setAppState(
+                                    appState.copy(
+                                        todos = appState.todos.map {
+                                            if (it.id == item.id) it.copy(completed = nextCompleted) else it
+                                        }
+                                    )
+                                )
+                                if (nextCompleted) {
+                                    TodoReminderScheduler(context).cancel(item.id)
+                                    playTodoCompletedSound()
                                 }
-                            ))
-                            if (nextCompleted) {
+                            },
+                            onDelete = { item ->
                                 TodoReminderScheduler(context).cancel(item.id)
-                                playTodoCompletedSound()
-                            }
-                        },
-                        onDelete = { item ->
-                            TodoReminderScheduler(context).cancel(item.id)
-                            setAppState(appState.copy(todos = appState.todos.filterNot { it.id == item.id }))
-                            if (selectedTodoId == item.id) selectedTodoId = null
-                        },
-                        onUpdate = { updatedItem ->
-                            setAppState(appState.copy(
-                                todos = appState.todos.map { item ->
-                                    if (item.id == updatedItem.id) updatedItem else item
+                                setAppState(appState.copy(todos = appState.todos.filterNot { it.id == item.id }))
+                                if (selectedTodoId == item.id) selectedTodoId = null
+                            },
+                            onUpdate = { updatedItem ->
+                                setAppState(
+                                    appState.copy(
+                                        todos = appState.todos.map { item ->
+                                            if (item.id == updatedItem.id) updatedItem else item
+                                        }
+                                    )
+                                )
+                            },
+                            onDeleteMany = { itemIds ->
+                                itemIds.forEach { TodoReminderScheduler(context).cancel(it) }
+                                setAppState(
+                                    appState.copy(
+                                        todos = appState.todos.filterNot { it.id in itemIds }
+                                    )
+                                )
+                                if (selectedTodoId in itemIds) selectedTodoId = null
+                            },
+                            onAddMany = { newTodos ->
+                                if (newTodos.isNotEmpty()) {
+                                    setAppState(appState.copy(todos = newTodos + appState.todos))
                                 }
-                            ))
-                        },
-                        onDeleteMany = { itemIds ->
-                            itemIds.forEach { TodoReminderScheduler(context).cancel(it) }
-                            setAppState(appState.copy(
-                                todos = appState.todos.filterNot { it.id in itemIds }
-                            ))
-                            if (selectedTodoId in itemIds) selectedTodoId = null
-                        },
-                        onAddMany = { newTodos ->
-                            if (newTodos.isNotEmpty()) {
-                                setAppState(appState.copy(todos = newTodos + appState.todos))
                             }
-                        }
-                    )
+                        )
 
-                    MainTab.Templates -> TemplateScreen(
-                        templates = appState.templates,
-                        selectedTemplateId = appState.selectedTemplateId,
-                        providers = appState.llmProviders,
-                        agents = appState.agents,
-                        nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
-                        onSelectedTemplate = { templateId ->
-                            setAppState(appState.copy(selectedTemplateId = templateId))
-                        },
-                        onUpsert = { template ->
-                            val exists = appState.templates.any { it.id == template.id }
-                            val templates = if (exists) {
-                                appState.templates.map { if (it.id == template.id) template else it }
-                            } else {
-                                listOf(template) + appState.templates
-                            }
-                            setAppState(appState.copy(
-                                templates = templates,
-                                selectedTemplateId = template.id
-                            ))
-                        },
-                        onDelete = { template ->
-                            val nextTemplates = appState.templates.filterNot { it.id == template.id }.ifEmpty {
-                                listOf(defaultTemplate())
-                            }
-                            setAppState(appState.copy(
-                                templates = nextTemplates,
-                                selectedTemplateId = nextTemplates.first().id
-                            ))
-                        }
-                    )
-
-                    MainTab.Records -> RecordsScreen(
-                        records = appState.records,
-                        summaries = appState.dailySummaries,
-                        templates = appState.templates,
-                        todos = appState.todos,
-                        providers = appState.llmProviders,
-                        agents = appState.agents,
-                        nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
-                        onUpdateRecord = { updatedRecord ->
-                            setAppState(appState.copy(
-                                records = appState.records.map { record ->
-                                    if (record.id == updatedRecord.id) updatedRecord else record
+                        MainTab.Records -> RecordsScreen(
+                            records = appState.records,
+                            summaries = appState.dailySummaries,
+                            templates = appState.templates,
+                            todos = appState.todos,
+                            providers = appState.llmProviders,
+                            agents = appState.agents,
+                            nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
+                            onUpdateRecord = { updatedRecord ->
+                                setAppState(
+                                    appState.copy(
+                                        records = appState.records.map { record ->
+                                            if (record.id == updatedRecord.id) updatedRecord else record
+                                        }
+                                    )
+                                )
+                            },
+                            onSaveSummary = { summary ->
+                                val summaries = listOf(summary) + appState.dailySummaries.filterNot {
+                                    it.dayKey == summary.dayKey
                                 }
-                            ))
-                        },
-                        onSaveSummary = { summary ->
-                            val summaries = listOf(summary) + appState.dailySummaries.filterNot {
-                                it.dayKey == summary.dayKey
+                                setAppState(appState.copy(dailySummaries = summaries))
                             }
-                            setAppState(appState.copy(dailySummaries = summaries))
-                        }
-                    )
+                        )
 
-                    MainTab.Settings -> SettingsScreen(
-                        appState = appState,
-                        appVersionName = BuildConfig.VERSION_NAME,
-                        syncing = syncing,
-                        onSync = ::requestSync,
-                        onStateChange = { setAppState(it) }
-                    )
+                        MainTab.More -> MoreScreen(
+                            onOpenTemplates = { secondaryDestination = SecondaryDestination.Templates },
+                            onOpenSettings = { secondaryDestination = SecondaryDestination.Settings }
+                        )
+                    }
                 }
             }
         }
@@ -1742,7 +1773,7 @@ private fun TodoTagPickerButton(
         modifier = modifier.size(48.dp)
     ) {
         Icon(
-            Icons.Outlined.Label,
+            Icons.AutoMirrored.Outlined.Label,
             contentDescription = "编辑标签",
             tint = selectedTags.firstOrNull()?.let(::todoTagColor) ?: MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -1817,7 +1848,7 @@ private fun TodoTagEditDialog(
                         modifier = Modifier.weight(1f),
                         label = { Text("新标签") },
                         singleLine = true,
-                        leadingIcon = { Icon(Icons.Outlined.Label, contentDescription = null) }
+                        leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = null) }
                     )
                     FilledIconButton(
                         enabled = normalizedNewTag != null,
@@ -1923,7 +1954,7 @@ private fun TodoFilterControls(
             verticalAlignment = Alignment.CenterVertically
         ) {
             OutlinedButton(onClick = onOpenTagFilter, modifier = Modifier.weight(1f)) {
-                Icon(Icons.Outlined.Label, contentDescription = null)
+                Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text(
                     selectedTag?.let { "#$it" } ?: "全部标签",
@@ -2281,7 +2312,7 @@ private fun TodoTagChip(tag: String) {
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Icon(
-                Icons.Outlined.Label,
+                Icons.AutoMirrored.Outlined.Label,
                 contentDescription = null,
                 modifier = Modifier.size(14.dp)
             )
@@ -2367,41 +2398,6 @@ private fun TodoSelectionBar(
 }
 
 @Composable
-private fun SettingActionRow(
-    icon: ImageVector,
-    title: String,
-    value: String,
-    onClick: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick)
-            .padding(12.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(title, fontWeight = FontWeight.SemiBold)
-            Text(
-                value,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        Icon(
-            Icons.Outlined.KeyboardArrowDown,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
 private fun TodoEditorDialog(
     todo: TodoItem,
     availableTags: List<String>,
@@ -2469,7 +2465,7 @@ private fun TodoEditorDialog(
                         onClick = { editingDate = true }
                     )
                     SettingActionRow(
-                        icon = Icons.Outlined.Label,
+                        icon = Icons.AutoMirrored.Outlined.Label,
                         title = "标签",
                         value = if (draftTags.isEmpty()) "未添加标签" else draftTags.joinToString(" ") { "#$it" },
                         onClick = { editingTags = true }
@@ -2646,7 +2642,8 @@ private fun TemplateScreen(
     nickname: String,
     onSelectedTemplate: (String) -> Unit,
     onUpsert: (RecordTemplate) -> Unit,
-    onDelete: (RecordTemplate) -> Unit
+    onDelete: (RecordTemplate) -> Unit,
+    onBack: (() -> Unit)? = null
 ) {
     var editingTemplate by remember { mutableStateOf<RecordTemplate?>(null) }
     var showingAiTemplate by remember { mutableStateOf(false) }
@@ -2656,7 +2653,11 @@ private fun TemplateScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Header(title = "记录模板", subtitle = "自定义番茄结束后要回答的问题")
+            SecondaryHeader(
+                title = "记录模板",
+                subtitle = "自定义番茄结束后要回答的问题",
+                onBack = onBack
+            )
         }
         item {
             Row(
@@ -3427,169 +3428,6 @@ private fun TimelineRecordItem(
 }
 
 @Composable
-private fun MarkdownText(
-    content: String,
-    modifier: Modifier = Modifier,
-    contentColor: Color = LocalContentColor.current,
-    accentColor: Color = MaterialTheme.colorScheme.primary
-) {
-    val lines = content.lines()
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        lines.forEach { rawLine ->
-            val line = rawLine.trim()
-            when {
-                line.isBlank() -> Spacer(Modifier.height(2.dp))
-                line.matches(Regex("-{3,}|\\*{3,}|_{3,}")) -> HorizontalDivider()
-                line.startsWith("### ") -> MarkdownLine(
-                    text = line.removePrefix("### "),
-                    weight = FontWeight.SemiBold,
-                    color = accentColor
-                )
-                line.startsWith("## ") -> MarkdownLine(
-                    text = line.removePrefix("## "),
-                    style = MaterialTheme.typography.titleMedium,
-                    weight = FontWeight.Bold,
-                    color = accentColor
-                )
-                line.startsWith("# ") -> MarkdownLine(
-                    text = line.removePrefix("# "),
-                    style = MaterialTheme.typography.titleLarge,
-                    weight = FontWeight.Bold,
-                    color = accentColor
-                )
-                line.startsWith(">") -> Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    color = MaterialTheme.colorScheme.surfaceVariant,
-                    contentColor = contentColor,
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    MarkdownLine(
-                        text = line.removePrefix(">").trim(),
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                        color = contentColor
-                    )
-                }
-                line.isMarkdownBullet() -> Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Text("•", color = accentColor, fontWeight = FontWeight.Bold)
-                    MarkdownLine(
-                        text = line.removeMarkdownBullet(),
-                        modifier = Modifier.weight(1f),
-                        color = contentColor
-                    )
-                }
-                line.isMarkdownNumberedItem() -> {
-                    val number = line.substringBefore(".")
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        Text("$number.", color = accentColor, fontWeight = FontWeight.Bold)
-                        MarkdownLine(
-                            text = line.substringAfter(".").trim(),
-                            modifier = Modifier.weight(1f),
-                            color = contentColor
-                        )
-                    }
-                }
-                else -> MarkdownLine(text = line, color = contentColor)
-            }
-        }
-    }
-}
-
-@Composable
-private fun MarkdownLine(
-    text: String,
-    modifier: Modifier = Modifier,
-    style: androidx.compose.ui.text.TextStyle = MaterialTheme.typography.bodyMedium,
-    weight: FontWeight? = null,
-    color: Color = MaterialTheme.colorScheme.onSurface
-) {
-    Text(
-        text = markdownInlineText(text),
-        modifier = modifier,
-        style = style,
-        fontWeight = weight,
-        color = color
-    )
-}
-
-@Composable
-private fun markdownInlineText(text: String): AnnotatedString {
-    val strong = SpanStyle(fontWeight = FontWeight.Bold)
-    val emphasis = SpanStyle(fontStyle = FontStyle.Italic)
-    val code = SpanStyle(
-        color = MaterialTheme.colorScheme.primary,
-        background = MaterialTheme.colorScheme.surfaceVariant
-    )
-    val deleted = SpanStyle(textDecoration = TextDecoration.LineThrough)
-    return buildAnnotatedString {
-        appendMarkdownSegments(
-            text = text,
-            markers = listOf(
-                MarkdownMarker("**", strong),
-                MarkdownMarker("__", strong),
-                MarkdownMarker("~~", deleted),
-                MarkdownMarker("`", code),
-                MarkdownMarker("*", emphasis),
-                MarkdownMarker("_", emphasis)
-            )
-        )
-    }
-}
-
-private data class MarkdownMarker(
-    val token: String,
-    val style: SpanStyle
-)
-
-private fun AnnotatedString.Builder.appendMarkdownSegments(
-    text: String,
-    markers: List<MarkdownMarker>
-) {
-    var index = 0
-    while (index < text.length) {
-        val marker = markers.firstOrNull { text.startsWith(it.token, index) }
-        if (marker == null) {
-            append(text[index].toString())
-            index += 1
-            continue
-        }
-        val start = index + marker.token.length
-        val end = text.indexOf(marker.token, start)
-        if (end <= start) {
-            append(marker.token)
-            index += marker.token.length
-            continue
-        }
-        withStyle(marker.style) {
-            append(text.substring(start, end))
-        }
-        index = end + marker.token.length
-    }
-}
-
-private fun String.isMarkdownBullet(): Boolean {
-    return startsWith("- ") || startsWith("* ") || startsWith("• ")
-}
-
-private fun String.removeMarkdownBullet(): String {
-    return drop(2).trim()
-}
-
-private fun String.isMarkdownNumberedItem(): Boolean {
-    return matches(Regex("\\d+\\.\\s+.+"))
-}
-
-@Composable
 private fun RecordTodoChip(title: String, bound: Boolean) {
     val containerColor = if (bound) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
     val contentColor = if (bound) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
@@ -3613,7 +3451,8 @@ private fun SettingsScreen(
     appVersionName: String,
     syncing: Boolean,
     onSync: () -> Unit,
-    onStateChange: (AppState) -> Unit
+    onStateChange: (AppState) -> Unit,
+    onBack: (() -> Unit)? = null
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -3621,7 +3460,11 @@ private fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Header(title = "设置", subtitle = "本地身份、模型导入和版本")
+            SecondaryHeader(
+                title = "设置",
+                subtitle = "本地身份、模型导入和版本",
+                onBack = onBack
+            )
         }
         item {
             ProjectVersionCard(
@@ -3802,88 +3645,6 @@ private fun WebDevSyncSettingsCard(
                 Spacer(Modifier.width(8.dp))
                 Text(if (syncing) "正在同步" else "立即同步")
             }
-        }
-    }
-}
-
-@Composable
-private fun ProjectVersionCard(
-    appVersionName: String
-) {
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text("版本", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        text = "v$appVersionName",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Surface(
-                    color = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                    Text(
-                        text = "v$appVersionName",
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun NicknameSettingsCard(
-    nickname: String,
-    onNicknameChange: (String) -> Unit
-) {
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("个人昵称", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            OutlinedTextField(
-                value = nickname,
-                onValueChange = { onNicknameChange(it.take(24)) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("本地昵称") },
-                singleLine = true
-            )
-        }
-    }
-}
-
-@Composable
-private fun FontScaleSettingsCard(
-    fontScale: Float,
-    onChange: (Float) -> Unit
-) {
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("字体大小", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Spacer(Modifier.weight(1f))
-                Text("x${"%.2f".format(fontScale)}", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Slider(
-                value = fontScale,
-                onValueChange = onChange,
-                valueRange = 0.85f..1.3f
-            )
         }
     }
 }
@@ -4748,49 +4509,6 @@ private fun RecordChatDialog(
 }
 
 @Composable
-private fun ChatBubble(message: LlmChatMessage) {
-    val isUser = message.role == "user"
-    val bubbleColor = if (isUser) {
-        MaterialTheme.colorScheme.primaryContainer
-    } else {
-        MaterialTheme.colorScheme.surfaceVariant
-    }
-    val bubbleContentColor = if (isUser) {
-        MaterialTheme.colorScheme.onPrimaryContainer
-    } else {
-        MaterialTheme.colorScheme.onSurfaceVariant
-    }
-    val accentColor = if (isUser) {
-        MaterialTheme.colorScheme.onPrimaryContainer
-    } else {
-        MaterialTheme.colorScheme.primary
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
-    ) {
-        Surface(
-            modifier = Modifier.widthIn(max = 520.dp),
-            color = bubbleColor,
-            contentColor = bubbleContentColor,
-            shape = RoundedCornerShape(
-                topStart = 14.dp,
-                topEnd = 14.dp,
-                bottomEnd = if (isUser) 4.dp else 14.dp,
-                bottomStart = if (isUser) 14.dp else 4.dp
-            )
-        ) {
-            MarkdownText(
-                content = message.content,
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                contentColor = bubbleContentColor,
-                accentColor = accentColor
-            )
-        }
-    }
-}
-
-@Composable
 private fun CelebrationCanvas() {
     val transition = rememberInfiniteTransition(label = "celebration")
     val phase by transition.animateFloat(
@@ -5233,28 +4951,6 @@ private fun RecordAnswerFields(
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun Header(title: String, subtitle: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-private fun EmptyState(text: String) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(160.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(text, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
