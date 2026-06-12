@@ -10,16 +10,10 @@ import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.widget.Toast
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -113,11 +107,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -138,16 +128,37 @@ import com.protato.app.ui.MainTab
 import com.protato.app.ui.ProtatoBottomBar
 import com.protato.app.ui.ProtatoTheme
 import com.protato.app.ui.SecondaryDestination
+import com.protato.app.ui.components.CelebrationCanvas
 import com.protato.app.ui.components.ChatBubble
 import com.protato.app.ui.components.EmptyState
 import com.protato.app.ui.components.Header
-import com.protato.app.ui.components.MarkdownText
 import com.protato.app.ui.components.SecondaryHeader
 import com.protato.app.ui.components.SettingActionRow
+import com.protato.app.ui.components.TodoDateChip
+import com.protato.app.ui.components.TodoPomodoroChip
+import com.protato.app.ui.components.TodoReminderChip
+import com.protato.app.ui.components.TodoTagChip
 import com.protato.app.ui.screens.more.MoreScreen
+import com.protato.app.ui.screens.records.DailySummaryDialog
+import com.protato.app.ui.screens.records.DailySummaryCard
+import com.protato.app.ui.screens.records.DaySwitcher
+import com.protato.app.ui.screens.records.RecordAnswerFields
+import com.protato.app.ui.screens.records.RecordDayOption
+import com.protato.app.ui.screens.records.RecordTodoSelector
+import com.protato.app.ui.screens.focus.TimerRing
+import com.protato.app.ui.screens.records.RecordTodoChip
+import com.protato.app.ui.screens.settings.AgentRow
 import com.protato.app.ui.screens.settings.FontScaleSettingsCard
+import com.protato.app.ui.screens.settings.LlmProviderRow
 import com.protato.app.ui.screens.settings.NicknameSettingsCard
+import com.protato.app.ui.screens.settings.PermissionCheckbox
 import com.protato.app.ui.screens.settings.ProjectVersionCard
+import com.protato.app.ui.screens.settings.SettingLine
+import com.protato.app.ui.screens.templates.TemplateCard
+import com.protato.app.ui.screens.todo.TodoChoiceLabel
+import com.protato.app.ui.screens.todo.TodoSectionHeader
+import com.protato.app.ui.screens.todo.TodoSelectionBar
+import com.protato.app.ui.screens.todo.TodoSwipeBackground
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
@@ -1306,7 +1317,10 @@ private fun TodoSelectDialog(
                             selected = selectedTodoId == todo.id,
                             onClick = { onSelected(todo.id) },
                             label = {
-                                TodoChoiceLabel(todo)
+                                TodoChoiceLabel(
+                                    todo = todo,
+                                    dateLabel = todo.dueDate?.let(::formatDayLabel)
+                                )
                             },
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -1354,54 +1368,6 @@ private fun TemplateSelectDialog(
             }
         }
     )
-}
-
-@Composable
-private fun TodoChoiceLabel(todo: TodoItem) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(
-            todo.title,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        val metadata = buildList {
-            add("${todo.plannedPomodoros.coerceAtLeast(1)} 个番茄")
-            todo.dueDate?.let { add(formatDayLabel(it)) }
-            addAll(todo.tags.map { "#$it" })
-        }.joinToString(" · ")
-        if (metadata.isNotBlank()) {
-            Text(
-                metadata,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-    }
-}
-
-@Composable
-private fun TimerRing(progress: Float) {
-    val color = MaterialTheme.colorScheme.primary
-    val track = MaterialTheme.colorScheme.surfaceVariant
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val stroke = Stroke(width = 18.dp.toPx(), cap = StrokeCap.Round)
-        drawArc(
-            color = track,
-            startAngle = -90f,
-            sweepAngle = 360f,
-            useCenter = false,
-            style = stroke
-        )
-        drawArc(
-            color = color,
-            startAngle = -90f,
-            sweepAngle = 360f * progress.coerceIn(0f, 1f),
-            useCenter = false,
-            style = stroke
-        )
-    }
 }
 
 @Composable
@@ -1751,13 +1717,13 @@ private fun TodoDraftMetadataRow(draft: TodoDraft) {
     ) {
         item { TodoPomodoroChip(draft.plannedPomodoros) }
         draft.dueDate?.let { dueDate ->
-            item { TodoDateChip(dueDate) }
+            item { TodoDateChip(formatDayLabel(dueDate)) }
         }
         draft.reminderAt?.let { reminderAt ->
-            item { TodoReminderChip(reminderAt) }
+            item { TodoReminderChip(formatTime(reminderAt)) }
         }
         items(draft.tags, key = { it }) { tag ->
-            TodoTagChip(tag)
+            TodoTagChip(tag, todoTagColor(tag))
         }
     }
 }
@@ -2056,37 +2022,6 @@ private fun TodoTagFilterDialog(
     )
 }
 
-@Composable
-private fun TodoSectionHeader(
-    title: String,
-    count: Int,
-    expanded: Boolean,
-    onToggle: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onToggle),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        HorizontalDivider(
-            modifier = Modifier.width(44.dp),
-            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)
-        )
-        Text("$title · $count", fontWeight = FontWeight.SemiBold)
-        Icon(
-            if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        HorizontalDivider(
-            modifier = Modifier.weight(1f),
-            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)
-        )
-    }
-}
-
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 private fun TodoRow(
@@ -2189,41 +2124,15 @@ private fun TodoMetadataStrip(
     ) {
         item { TodoPomodoroChip(todo.plannedPomodoros) }
         todo.dueDate?.let { dueDate ->
-            item { TodoDateChip(dueDate) }
+            item { TodoDateChip(formatDayLabel(dueDate)) }
         }
         todo.reminderAt?.let { reminderAt ->
-            item { TodoReminderChip(reminderAt) }
+            item { TodoReminderChip(formatTime(reminderAt)) }
         }
         if (includeTags) {
             items(todo.tags, key = { it }) { tag ->
-                TodoTagChip(tag)
+                TodoTagChip(tag, todoTagColor(tag))
             }
-        }
-    }
-}
-
-@Composable
-private fun TodoReminderChip(reminderAt: Long) {
-    Surface(
-        color = MaterialTheme.colorScheme.secondaryContainer,
-        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Icon(
-                Icons.Outlined.DateRange,
-                contentDescription = null,
-                modifier = Modifier.size(14.dp)
-            )
-            Text(
-                formatTime(reminderAt),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold
-            )
         }
     }
 }
@@ -2239,160 +2148,9 @@ private fun TodoExpandedDetails(todo: TodoItem) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 items(todo.tags, key = { it }) { tag ->
-                    TodoTagChip(tag)
+                    TodoTagChip(tag, todoTagColor(tag))
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun TodoPomodoroChip(count: Int) {
-    Surface(
-        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-        contentColor = MaterialTheme.colorScheme.primary,
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Icon(
-                painter = painterResource(R.drawable.ic_tomato),
-                contentDescription = null,
-                modifier = Modifier.size(14.dp)
-            )
-            Text(
-                "x ${count.coerceAtLeast(1)}",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-    }
-}
-
-@Composable
-private fun TodoDateChip(dueDate: String) {
-    Surface(
-        color = MaterialTheme.colorScheme.tertiaryContainer,
-        contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Icon(
-                Icons.Outlined.DateRange,
-                contentDescription = null,
-                modifier = Modifier.size(14.dp)
-            )
-            Text(
-                formatDayLabel(dueDate),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-    }
-}
-
-@Composable
-private fun TodoTagChip(tag: String) {
-    val chipColor = todoTagColor(tag)
-    Surface(
-        color = chipColor.copy(alpha = 0.18f),
-        contentColor = chipColor,
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Icon(
-                Icons.AutoMirrored.Outlined.Label,
-                contentDescription = null,
-                modifier = Modifier.size(14.dp)
-            )
-            Text(
-                "#$tag",
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-    }
-}
-
-@Composable
-private fun TodoSwipeBackground(dismissValue: SwipeToDismissBoxValue) {
-    val deleting = dismissValue == SwipeToDismissBoxValue.EndToStart
-    val editing = dismissValue == SwipeToDismissBoxValue.StartToEnd
-    val editContentColor = if (editing) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
-    val backgroundColor = when {
-        deleting -> MaterialTheme.colorScheme.error
-        editing -> MaterialTheme.colorScheme.tertiary
-        else -> MaterialTheme.colorScheme.surfaceVariant
-    }
-
-    Row(
-        modifier = Modifier
-            .fillMaxSize()
-            .clip(RoundedCornerShape(8.dp))
-            .background(backgroundColor)
-            .padding(horizontal = 18.dp),
-        horizontalArrangement = if (deleting) Arrangement.End else Arrangement.Start,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (!deleting) {
-            Icon(
-                imageVector = Icons.Outlined.Edit,
-                contentDescription = "编辑待办",
-                tint = editContentColor
-            )
-            Spacer(Modifier.width(8.dp))
-            Text("编辑", color = editContentColor, fontWeight = FontWeight.SemiBold)
-        } else {
-            Text("删除", color = Color.White, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.width(8.dp))
-            Icon(
-                imageVector = Icons.Outlined.Delete,
-                contentDescription = "删除待办",
-                tint = Color.White
-            )
-        }
-    }
-}
-
-@Composable
-private fun TodoSelectionBar(
-    selectedCount: Int,
-    onCancel: () -> Unit,
-    onDelete: () -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(horizontal = 6.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        IconButton(onClick = onCancel) {
-            Icon(Icons.Outlined.Close, contentDescription = "退出多选")
-        }
-        Text(
-            text = "已选择 $selectedCount 项",
-            modifier = Modifier.weight(1f),
-            fontWeight = FontWeight.SemiBold
-        )
-        IconButton(onClick = onDelete) {
-            Icon(
-                Icons.Outlined.Delete,
-                contentDescription = "删除所选待办",
-                tint = MaterialTheme.colorScheme.error
-            )
         }
     }
 }
@@ -2686,6 +2444,9 @@ private fun TemplateScreen(
         items(templates, key = { it.id }) { template ->
             TemplateCard(
                 template = template,
+                fieldLines = template.fields.mapIndexed { index, field ->
+                    "${index + 1}. ${field.title} · ${field.type.label()}"
+                },
                 selected = template.id == selectedTemplateId,
                 canDelete = templates.size > 1,
                 onSelect = { onSelectedTemplate(template.id) },
@@ -2717,88 +2478,6 @@ private fun TemplateScreen(
                 showingAiTemplate = false
             }
         )
-    }
-}
-
-@Composable
-private fun TemplateCard(
-    template: RecordTemplate,
-    selected: Boolean,
-    canDelete: Boolean,
-    onSelect: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
-) {
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = if (selected) {
-                MaterialTheme.colorScheme.primaryContainer
-            } else {
-                MaterialTheme.colorScheme.surface
-            }
-        )
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        template.name,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        "${template.fields.size} 个步骤",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
-                if (selected) {
-                    AssistChip(onClick = onSelect, label = { Text("默认") }, leadingIcon = {
-                        Icon(Icons.Outlined.Check, contentDescription = null)
-                    })
-                } else {
-                    OutlinedButton(onClick = onSelect) {
-                        Text("设为默认")
-                    }
-                }
-            }
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f))
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                template.fields.forEachIndexed { index, field ->
-                    Text(
-                        text = "${index + 1}. ${field.title} · ${field.type.label()}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick = onEdit) {
-                    Icon(Icons.Outlined.Edit, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("编辑")
-                }
-                if (canDelete) {
-                    TextButton(onClick = onDelete) {
-                        Icon(Icons.Outlined.Delete, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("删除")
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -3092,18 +2771,24 @@ private fun RecordsScreen(
             }
             item {
                 DaySwitcher(
-                    dayKeys = availableDayKeys,
+                    dayOptions = availableDayKeys.map { key ->
+                        RecordDayOption(
+                            key = key,
+                            label = formatDayLabel(key),
+                            count = records.count { dayKey(it.endedAt) == key }
+                        )
+                    },
                     selectedDayKey = effectiveSelectedDayKey,
-                    records = records,
                     onSelected = { selectedDayKey = it },
                     onOpenDatePicker = { choosingRecordDate = true }
                 )
             }
             item {
                 DailySummaryCard(
-                    dayKey = effectiveSelectedDayKey,
-                    records = selectedDayRecords,
-                    summary = selectedDaySummary,
+                    title = "${formatDayLabel(effectiveSelectedDayKey)} 总结",
+                    statsText = "${selectedDayRecords.size} 次专注 · ${selectedDayRecords.sumOf { it.focusMinutes }} 分钟 · ${selectedDayRecords.map { it.todoTitle }.distinct().size} 个对象",
+                    hasSummary = selectedDaySummary != null,
+                    hasRecords = selectedDayRecords.isNotEmpty(),
                     loading = generatingSummary,
                     onGenerate = {
                         scope.launch {
@@ -3168,7 +2853,11 @@ private fun RecordsScreen(
         }
 
         viewingSummary?.let { summary ->
-            DailySummaryDialog(summary = summary, onDismiss = { viewingSummary = null })
+            DailySummaryDialog(
+                summary = summary,
+                generatedAtLabel = formatTime(summary.generatedAt),
+                onDismiss = { viewingSummary = null }
+            )
         }
 
         if (choosingRecordDate) {
@@ -3186,123 +2875,6 @@ private fun RecordsScreen(
             )
         }
     }
-}
-
-@Composable
-private fun DaySwitcher(
-    dayKeys: List<String>,
-    selectedDayKey: String,
-    records: List<PomodoroRecord>,
-    onSelected: (String) -> Unit,
-    onOpenDatePicker: () -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        IconButton(onClick = onOpenDatePicker) {
-            Icon(Icons.Outlined.DateRange, contentDescription = "选择记录日期")
-        }
-        LazyRow(
-            modifier = Modifier.weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(dayKeys, key = { it }) { key ->
-                val count = records.count { dayKey(it.endedAt) == key }
-                FilterChip(
-                    selected = selectedDayKey == key,
-                    onClick = { onSelected(key) },
-                    label = {
-                        Text(
-                            "${formatDayLabel(key)} · $count",
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun DailySummaryCard(
-    dayKey: String,
-    records: List<PomodoroRecord>,
-    summary: DailySummary?,
-    loading: Boolean,
-    onGenerate: () -> Unit,
-    onOpen: () -> Unit
-) {
-    val focusMinutes = records.sumOf { it.focusMinutes }
-    val focusedTodos = records.map { it.todoTitle }.distinct().size
-
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "${formatDayLabel(dayKey)} 总结",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        "${records.size} 次专注 · $focusMinutes 分钟 · $focusedTodos 个对象",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                IconButton(
-                    enabled = summary != null,
-                    onClick = onOpen
-                ) {
-                    Icon(Icons.Outlined.Edit, contentDescription = "查看总结")
-                }
-                FilledIconButton(
-                    enabled = records.isNotEmpty() && !loading,
-                    onClick = onGenerate
-                ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_robot_svg),
-                        contentDescription = "生成总结"
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun DailySummaryDialog(summary: DailySummary, onDismiss: () -> Unit) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("关闭")
-            }
-        },
-        title = { Text(summary.title) },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    "${summary.pomodoroCount} 个番茄 · ${summary.focusMinutes} 分钟 · ${formatTime(summary.generatedAt)}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                MarkdownText(summary.content)
-            }
-        }
-    )
 }
 
 @Composable
@@ -3424,24 +2996,6 @@ private fun TimelineRecordItem(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun RecordTodoChip(title: String, bound: Boolean) {
-    val containerColor = if (bound) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
-    val contentColor = if (bound) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-    Surface(
-        color = containerColor,
-        contentColor = contentColor,
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        Text(
-            text = if (bound) "绑定任务 · $title" else "未绑定任务",
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold
-        )
     }
 }
 
@@ -3739,40 +3293,6 @@ private fun LlmProviderListCard(
                 editingProvider = null
             }
         )
-    }
-}
-
-@Composable
-private fun LlmProviderRow(provider: LlmProviderSettings, onClick: () -> Unit) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick),
-        color = MaterialTheme.colorScheme.surfaceVariant
-    ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(provider.name, fontWeight = FontWeight.SemiBold)
-                Text(
-                    listOf(
-                        provider.modelName.ifBlank { "未选择模型" },
-                        provider.endpoint.ifBlank { "未设置接口" }
-                    ).joinToString(" · "),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Text(
-                if (provider.apiKey.isBlank()) "未配置" else "已配置",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelLarge
-            )
-        }
     }
 }
 
@@ -4129,6 +3649,7 @@ private fun AgentListCard(
                         providerLabel = providers.firstOrNull {
                             it.id == agent.providerId
                         }?.agentProviderLabel() ?: "未选择模型",
+                        permissionsLabel = agent.permissions.label(),
                         onClick = { editingAgent = agent }
                     )
                 }
@@ -4151,41 +3672,6 @@ private fun AgentListCard(
                 editingAgent = null
             }
         )
-    }
-}
-
-@Composable
-private fun AgentRow(
-    agent: AgentSettings,
-    providerLabel: String,
-    onClick: () -> Unit
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick),
-        color = MaterialTheme.colorScheme.surfaceVariant
-    ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(agent.name, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "$providerLabel · ${agent.permissions.label()}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            Text(
-                if (agent.enabled) "启用" else "停用",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelLarge
-            )
-        }
     }
 }
 
@@ -4324,35 +3810,6 @@ private fun AgentEditDialog(
             }
         }
     )
-}
-
-@Composable
-private fun PermissionCheckbox(
-    checked: Boolean,
-    label: String,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Checkbox(checked = checked, onCheckedChange = onCheckedChange)
-        Text(label)
-    }
-}
-
-@Composable
-private fun SettingLine(label: String, value: String) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.width(12.dp))
-        Text(
-            text = value,
-            modifier = Modifier.weight(1f),
-            fontWeight = FontWeight.SemiBold,
-            textAlign = TextAlign.End
-        )
-    }
 }
 
 @Composable
@@ -4506,61 +3963,6 @@ private fun RecordChatDialog(
             }
         }
     )
-}
-
-@Composable
-private fun CelebrationCanvas() {
-    val transition = rememberInfiniteTransition(label = "celebration")
-    val phase by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1800),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "confetti"
-    )
-    val colors = listOf(
-        MaterialTheme.colorScheme.primary,
-        MaterialTheme.colorScheme.secondary,
-        MaterialTheme.colorScheme.tertiary,
-        Color(0xFFFFC857)
-    )
-
-    Canvas(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(96.dp)
-    ) {
-        val cupY = size.height * 0.58f
-        drawRect(
-            color = colors[0],
-            topLeft = Offset(size.width * 0.33f, cupY),
-            size = Size(size.width * 0.12f, size.height * 0.22f)
-        )
-        drawRect(
-            color = colors[2],
-            topLeft = Offset(size.width * 0.55f, cupY),
-            size = Size(size.width * 0.12f, size.height * 0.22f)
-        )
-        drawLine(
-            color = colors[1],
-            start = Offset(size.width * 0.45f, cupY + size.height * 0.05f),
-            end = Offset(size.width * 0.56f, cupY),
-            strokeWidth = 5.dp.toPx()
-        )
-        repeat(18) { index ->
-            val xSeed = ((index * 37) % 100) / 100f
-            val ySeed = ((index * 19) % 100) / 100f
-            val x = size.width * xSeed
-            val y = size.height * ((ySeed + phase) % 1f) * 0.72f
-            drawCircle(
-                color = colors[index % colors.size],
-                radius = (3 + index % 4).dp.toPx(),
-                center = Offset(x, y)
-            )
-        }
-    }
 }
 
 @Composable
@@ -4786,6 +4188,7 @@ private fun RecordEditDialog(
                         originalTodoStillSelected && !selectedTodoShownInDayList
                     },
                     dayLabel = formatDayLabel(recordDayKey),
+                    tagColor = ::todoTagColor,
                     onSelected = { selectedTodoId = it }
                 )
                 HorizontalDivider()
@@ -4799,159 +4202,6 @@ private fun RecordEditDialog(
             }
         }
     )
-}
-
-@Composable
-private fun RecordTodoSelector(
-    todos: List<TodoItem>,
-    selectedTodoId: String?,
-    fallbackTodoTitle: String?,
-    dayLabel: String,
-    onSelected: (String?) -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("绑定任务 · $dayLabel", fontWeight = FontWeight.SemiBold)
-        if (todos.isEmpty() && fallbackTodoTitle == null) {
-            Text("这一天还没有可绑定的待办。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else {
-            RecordTodoListRow(
-                selected = selectedTodoId == null,
-                onClick = { onSelected(null) },
-                title = "不绑定",
-                tags = emptyList()
-            )
-            if (fallbackTodoTitle != null) {
-                RecordTodoListRow(
-                    selected = true,
-                    onClick = { },
-                    title = fallbackTodoTitle,
-                    tags = emptyList()
-                )
-            }
-            todos.forEach { todo ->
-                RecordTodoListRow(
-                    selected = selectedTodoId == todo.id,
-                    onClick = { onSelected(todo.id) },
-                    title = todo.title,
-                    tags = todo.tags,
-                    completed = todo.completed
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun RecordTodoListRow(
-    selected: Boolean,
-    onClick: () -> Unit,
-    title: String,
-    tags: List<String>,
-    completed: Boolean = false
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        color = if (selected) {
-            MaterialTheme.colorScheme.secondaryContainer
-        } else {
-            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-        },
-        contentColor = if (selected) {
-            MaterialTheme.colorScheme.onSecondaryContainer
-        } else {
-            MaterialTheme.colorScheme.onSurfaceVariant
-        },
-        shape = RoundedCornerShape(8.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            RadioButton(selected = selected, onClick = onClick)
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Text(
-                    title,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textDecoration = if (completed) TextDecoration.LineThrough else TextDecoration.None
-                )
-                if (tags.isNotEmpty()) {
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        items(tags, key = { it }) { tag ->
-                            TodoTagChip(tag)
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun RecordAnswerFields(
-    template: RecordTemplate,
-    answers: androidx.compose.runtime.snapshots.SnapshotStateMap<String, String>,
-    onPolish: (String, String) -> Unit,
-    polishing: Boolean,
-    showPolishButton: Boolean
-) {
-    template.fields.forEach { field ->
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = if (field.required) "${field.title} *" else field.title,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f)
-                )
-                if (showPolishButton && field.id == "field-summary-draft") {
-                    TextButton(
-                        enabled = answers[field.id].orEmpty().isNotBlank() && !polishing,
-                        onClick = { onPolish(field.id, answers[field.id].orEmpty()) }
-                    ) {
-                        Text(if (polishing) "润色中" else "AI 润色")
-                    }
-                }
-            }
-            when (field.type) {
-                FieldType.SingleChoice -> field.options.forEach { option ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        RadioButton(
-                            selected = answers[field.id] == option,
-                            onClick = { answers[field.id] = option }
-                        )
-                        Text(option)
-                    }
-                }
-
-                FieldType.ShortAnswer -> OutlinedTextField(
-                    value = answers[field.id].orEmpty(),
-                    onValueChange = { answers[field.id] = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 2
-                )
-
-                FieldType.Attachment -> OutlinedTextField(
-                    value = answers[field.id].orEmpty(),
-                    onValueChange = { answers[field.id] = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("粘贴语音/图片链接或文件路径") },
-                    singleLine = true
-                )
-            }
-        }
-    }
 }
 
 private data class PendingRecord(

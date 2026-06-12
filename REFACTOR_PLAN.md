@@ -20,6 +20,16 @@ Protato 已经具备完整的产品雏形：待办、番茄计时、复盘记录
 - `模板` 和 `设置` 已从底部主导航移入 `更多` 二级入口。
 - `模板` 和 `设置` 二级页面已增加返回入口。
 - 已清理 `Icons.Outlined.Label` deprecation warning，改用 AutoMirrored 图标。
+- 已开始按目录拆分 `MainActivity.kt` 的 Compose 组件：
+  - `ui/components/`: `Header`, `SecondaryHeader`, `EmptyState`, `SettingActionRow`, `MarkdownText`, `ChatBubble`, `CelebrationCanvas`, `TodoChips`.
+  - `ui/screens/more/`: `MoreScreen`.
+  - `ui/screens/focus/`: `TimerRing`.
+  - `ui/screens/records/`: `DailySummaryDialog`, `DaySwitcher`, `DailySummaryCard`, `RecordTodoChip`, `RecordAnswerFields`.
+  - `ui/screens/records/`: `RecordTodoSelector`.
+  - `ui/screens/settings/`: `ProjectVersionCard`, `NicknameSettingsCard`, `FontScaleSettingsCard`, `PermissionCheckbox`, `SettingLine`, `LlmProviderRow`, `AgentRow`.
+  - `ui/screens/templates/`: `TemplateCard`.
+  - `ui/screens/todo/`: `TodoChoiceLabel`, `TodoSectionHeader`, `TodoSwipeBackground`, `TodoSelectionBar`.
+- `MainActivity.kt` 已从约 6999 行降到约 5803 行。
 
 ### Verified
 
@@ -28,6 +38,7 @@ Protato 已经具备完整的产品雏形：待办、番茄计时、复盘记录
 ### Still Open
 
 - `MainActivity.kt` 仍然承担大量 UI、状态协调和业务逻辑，尚未达到只负责 Activity setup 的目标。
+- `AgentScreen`, `TodoScreen`, `FocusScreen`, `TemplateScreen`, `RecordsScreen`, `SettingsScreen` 主体仍在 `MainActivity.kt`。
 - `state/` 层尚未建立，Compose 页面仍直接协调大量 `AppState` mutation。
 - `domain/` 层尚未建立，计时、待办、记录等业务规则仍分散在 UI 文件中。
 - Agent prompt、上下文构造、工具解析尚未完全抽入 `ai/`。
