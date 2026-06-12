@@ -66,7 +66,6 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
@@ -87,7 +86,6 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -114,7 +112,6 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -145,17 +142,23 @@ import com.protato.app.ui.screens.records.DaySwitcher
 import com.protato.app.ui.screens.records.RecordAnswerFields
 import com.protato.app.ui.screens.records.RecordDayOption
 import com.protato.app.ui.screens.records.RecordTodoSelector
+import com.protato.app.ui.screens.focus.DurationEditDialog
 import com.protato.app.ui.screens.focus.TimerRing
 import com.protato.app.ui.screens.records.RecordTodoChip
-import com.protato.app.ui.screens.settings.AgentRow
+import com.protato.app.ui.screens.records.TimelineRecordItem
 import com.protato.app.ui.screens.settings.FontScaleSettingsCard
-import com.protato.app.ui.screens.settings.LlmProviderRow
+import com.protato.app.ui.screens.settings.LlmProviderListCard
 import com.protato.app.ui.screens.settings.NicknameSettingsCard
-import com.protato.app.ui.screens.settings.PermissionCheckbox
 import com.protato.app.ui.screens.settings.ProjectVersionCard
-import com.protato.app.ui.screens.settings.SettingLine
+import com.protato.app.ui.screens.settings.RecordPolishProviderCard
+import com.protato.app.ui.screens.settings.WebDevSyncSettingsCard
 import com.protato.app.ui.screens.templates.TemplateCard
+import com.protato.app.ui.screens.templates.TemplateAiDialog
+import com.protato.app.ui.screens.templates.TemplateEditorDialog
 import com.protato.app.ui.screens.todo.TodoChoiceLabel
+import com.protato.app.ui.screens.todo.TodoDraftMetadataRow
+import com.protato.app.ui.screens.todo.TodoExpandedDetails
+import com.protato.app.ui.screens.todo.TodoMetadataStrip
 import com.protato.app.ui.screens.todo.TodoSectionHeader
 import com.protato.app.ui.screens.todo.TodoSelectionBar
 import com.protato.app.ui.screens.todo.TodoSwipeBackground
@@ -894,7 +897,15 @@ private fun AgentTodoDraftCard(
                 ) {
                     Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text(draft.title, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        TodoDraftMetadataRow(draft)
+                        TodoDraftMetadataRow(
+                            plannedPomodoros = draft.plannedPomodoros,
+                            dueDate = draft.dueDate,
+                            reminderAt = draft.reminderAt,
+                            tags = draft.tags,
+                            dayLabel = ::formatDayLabel,
+                            timeLabel = ::formatTime,
+                            tagColor = ::todoTagColor
+                        )
                     }
                 }
             }
@@ -944,7 +955,16 @@ private fun AgentTodoEditDraftCard(
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
-                        TodoDraftMetadataRow(edit.toPreviewDraft(original))
+                        val previewDraft = edit.toPreviewDraft(original)
+                        TodoDraftMetadataRow(
+                            plannedPomodoros = previewDraft.plannedPomodoros,
+                            dueDate = previewDraft.dueDate,
+                            reminderAt = previewDraft.reminderAt,
+                            tags = previewDraft.tags,
+                            dayLabel = ::formatDayLabel,
+                            timeLabel = ::formatTime,
+                            tagColor = ::todoTagColor
+                        )
                     }
                 }
             }
@@ -1196,7 +1216,9 @@ private fun TimerCard(
 
     if (editingDuration) {
         DurationEditDialog(
-            mode = mode,
+            modeKey = mode,
+            modeLabel = mode.label(),
+            durationRange = mode.durationRange(),
             initialMinutes = durationMinutes,
             onDismiss = { editingDuration = false },
             onSave = { minutes ->
@@ -1230,54 +1252,6 @@ private fun TimerCard(
             }
         )
     }
-}
-
-@Composable
-private fun DurationEditDialog(
-    mode: TimerMode,
-    initialMinutes: Int,
-    onDismiss: () -> Unit,
-    onSave: (Int) -> Unit
-) {
-    var minutesText by rememberSaveable(mode, initialMinutes) { mutableStateOf(initialMinutes.toString()) }
-    val range = mode.durationRange()
-    val minutes = minutesText.toIntOrNull()
-    val validMinutes = minutes?.coerceIn(range.first, range.last)
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(
-                enabled = validMinutes != null,
-                onClick = { validMinutes?.let(onSave) }
-            ) {
-                Text("保存")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
-            }
-        },
-        title = { Text("调整${mode.label()}时长") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = minutesText,
-                    onValueChange = { value ->
-                        minutesText = value.filter { it.isDigit() }.take(3)
-                    },
-                    label = { Text("分钟") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                )
-                Text(
-                    "${range.first}-${range.last} 分钟",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    )
 }
 
 @Composable
@@ -1700,32 +1674,21 @@ private fun TodoAiDialog(
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            TodoDraftMetadataRow(suggestion)
+                            TodoDraftMetadataRow(
+                                plannedPomodoros = suggestion.plannedPomodoros,
+                                dueDate = suggestion.dueDate,
+                                reminderAt = suggestion.reminderAt,
+                                tags = suggestion.tags,
+                                dayLabel = ::formatDayLabel,
+                                timeLabel = ::formatTime,
+                                tagColor = ::todoTagColor
+                            )
                         }
                     }
                 }
             }
         }
     )
-}
-
-@Composable
-private fun TodoDraftMetadataRow(draft: TodoDraft) {
-    LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        item { TodoPomodoroChip(draft.plannedPomodoros) }
-        draft.dueDate?.let { dueDate ->
-            item { TodoDateChip(formatDayLabel(dueDate)) }
-        }
-        draft.reminderAt?.let { reminderAt ->
-            item { TodoReminderChip(formatTime(reminderAt)) }
-        }
-        items(draft.tags, key = { it }) { tag ->
-            TodoTagChip(tag, todoTagColor(tag))
-        }
-    }
 }
 
 @Composable
@@ -2103,52 +2066,19 @@ private fun TodoRow(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
-                    TodoMetadataStrip(todo = todo, includeTags = !expanded)
+                    TodoMetadataStrip(
+                        todo = todo,
+                        dayLabel = ::formatDayLabel,
+                        timeLabel = ::formatTime,
+                        tagColor = ::todoTagColor,
+                        includeTags = !expanded
+                    )
                     if (expanded) {
-                        TodoExpandedDetails(todo = todo)
+                        TodoExpandedDetails(
+                            todo = todo,
+                            tagColor = ::todoTagColor
+                        )
                     }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun TodoMetadataStrip(
-    todo: TodoItem,
-    includeTags: Boolean = true
-) {
-    LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        item { TodoPomodoroChip(todo.plannedPomodoros) }
-        todo.dueDate?.let { dueDate ->
-            item { TodoDateChip(formatDayLabel(dueDate)) }
-        }
-        todo.reminderAt?.let { reminderAt ->
-            item { TodoReminderChip(formatTime(reminderAt)) }
-        }
-        if (includeTags) {
-            items(todo.tags, key = { it }) { tag ->
-                TodoTagChip(tag, todoTagColor(tag))
-            }
-        }
-    }
-}
-
-@Composable
-private fun TodoExpandedDetails(todo: TodoItem) {
-    if (todo.tags.isEmpty()) return
-
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        if (todo.tags.isNotEmpty()) {
-            LazyRow(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                items(todo.tags, key = { it }) { tag ->
-                    TodoTagChip(tag, todoTagColor(tag))
                 }
             }
         }
@@ -2459,6 +2389,8 @@ private fun TemplateScreen(
     editingTemplate?.let { template ->
         TemplateEditorDialog(
             initialTemplate = template,
+            newFieldId = ::newId,
+            fieldTypeLabel = { it.label() },
             onDismiss = { editingTemplate = null },
             onSave = {
                 onUpsert(it)
@@ -2468,257 +2400,25 @@ private fun TemplateScreen(
     }
 
     if (showingAiTemplate) {
+        val agent = selectTemplateAgent(agents)
+        val provider = agent?.providerId?.let { id -> providers.firstOrNull { it.id == id } }
+            ?: providers.firstOrNull { it.isConfiguredForChat() }
         TemplateAiDialog(
-            providers = providers,
-            agents = agents,
-            nickname = nickname,
+            generateSuggestion = { rawInput ->
+                if (agent != null && provider != null && provider.isConfiguredForChat()) {
+                    generateTemplateSuggestion(rawInput, agent, provider, nickname)
+                } else {
+                    localTemplateSuggestion(rawInput)
+                }
+            },
+            fallbackSuggestion = ::localTemplateSuggestion,
+            fieldTypeLabel = { it.label() },
             onDismiss = { showingAiTemplate = false },
             onAddTemplate = { template ->
                 onUpsert(template)
                 showingAiTemplate = false
             }
         )
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun TemplateEditorDialog(
-    initialTemplate: RecordTemplate,
-    onDismiss: () -> Unit,
-    onSave: (RecordTemplate) -> Unit
-) {
-    var name by rememberSaveable(initialTemplate.id) { mutableStateOf(initialTemplate.name) }
-    var fields by remember(initialTemplate.id) { mutableStateOf(initialTemplate.fields) }
-    var fieldTitle by rememberSaveable(initialTemplate.id) { mutableStateOf("") }
-    var fieldType by rememberSaveable(initialTemplate.id) { mutableStateOf(FieldType.ShortAnswer) }
-    var optionsText by rememberSaveable(initialTemplate.id) { mutableStateOf("") }
-    var required by rememberSaveable(initialTemplate.id) { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    if (name.isNotBlank() && fields.isNotEmpty()) {
-                        onSave(initialTemplate.copy(name = name.trim(), fields = fields))
-                    }
-                }
-            ) {
-                Icon(Icons.Outlined.Save, contentDescription = null)
-                Spacer(Modifier.width(6.dp))
-                Text("保存")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
-            }
-        },
-        title = { Text("编辑模板") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    label = { Text("模板名称") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                HorizontalDivider()
-                Text("字段", fontWeight = FontWeight.SemiBold)
-                fields.forEach { field ->
-                    FieldEditorRow(
-                        field = field,
-                        onDelete = { fields = fields.filterNot { it.id == field.id } }
-                    )
-                }
-                OutlinedTextField(
-                    value = fieldTitle,
-                    onValueChange = { fieldTitle = it },
-                    label = { Text("字段标题") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
-                SingleChoiceSegmentedButtonRow {
-                    FieldType.entries.forEachIndexed { index, type ->
-                        SegmentedButton(
-                            selected = fieldType == type,
-                            onClick = { fieldType = type },
-                            shape = SegmentedButtonDefaults.itemShape(index, FieldType.entries.size),
-                            label = { Text(type.label()) }
-                        )
-                    }
-                }
-                if (fieldType == FieldType.SingleChoice) {
-                    OutlinedTextField(
-                        value = optionsText,
-                        onValueChange = { optionsText = it },
-                        label = { Text("选项，用逗号分隔") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = required, onCheckedChange = { required = it })
-                    Text("必填")
-                }
-                OutlinedButton(
-                    onClick = {
-                        val options = optionsText.split(",", "，")
-                            .map { it.trim() }
-                            .filter { it.isNotBlank() }
-                        val canAdd = fieldTitle.isNotBlank() &&
-                            (fieldType != FieldType.SingleChoice || options.isNotEmpty())
-                        if (canAdd) {
-                            fields = fields + TemplateField(
-                                id = newId(),
-                                title = fieldTitle.trim(),
-                                type = fieldType,
-                                options = options,
-                                required = required
-                            )
-                            fieldTitle = ""
-                            optionsText = ""
-                            required = false
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Outlined.Add, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("添加字段")
-                }
-            }
-        }
-    )
-}
-
-@Composable
-private fun TemplateAiDialog(
-    providers: List<LlmProviderSettings>,
-    agents: List<AgentSettings>,
-    nickname: String,
-    onDismiss: () -> Unit,
-    onAddTemplate: (RecordTemplate) -> Unit
-) {
-    val scope = rememberCoroutineScope()
-    var rawInput by remember { mutableStateOf("") }
-    var suggestion by remember { mutableStateOf<RecordTemplate?>(null) }
-    var loading by remember { mutableStateOf(false) }
-    var errorText by remember { mutableStateOf<String?>(null) }
-    val agent = selectTemplateAgent(agents)
-    val provider = agent?.providerId?.let { id -> providers.firstOrNull { it.id == id } }
-        ?: providers.firstOrNull { it.isConfiguredForChat() }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(
-                enabled = suggestion != null,
-                onClick = { suggestion?.let(onAddTemplate) }
-            ) {
-                Text("添加模板")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("关闭")
-            }
-        },
-        title = { Text("AI 生成模板") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                OutlinedTextField(
-                    value = rawInput,
-                    onValueChange = { rawInput = it.take(1200) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("描述你想复盘什么") },
-                    minLines = 4
-                )
-                OutlinedButton(
-                    enabled = rawInput.isNotBlank() && !loading,
-                    onClick = {
-                        scope.launch {
-                            loading = true
-                            errorText = null
-                            suggestion = runCatching {
-                                if (agent != null && provider != null && provider.isConfiguredForChat()) {
-                                    generateTemplateSuggestion(rawInput, agent, provider, nickname)
-                                } else {
-                                    localTemplateSuggestion(rawInput)
-                                }
-                            }.getOrElse { error ->
-                                errorText = error.message ?: "生成失败"
-                                localTemplateSuggestion(rawInput)
-                            }
-                            loading = false
-                        }
-                    }
-                ) {
-                    Text(if (loading) "生成中" else "生成模板")
-                }
-                errorText?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                suggestion?.let { template ->
-                    Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Text(template.name, fontWeight = FontWeight.Bold)
-                            template.fields.forEachIndexed { index, field ->
-                                Text(
-                                    "${index + 1}. ${field.title} · ${field.type.label()}",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    )
-}
-
-@Composable
-private fun FieldEditorRow(field: TemplateField, onDelete: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(field.title, fontWeight = FontWeight.Medium)
-            Text(
-                text = buildString {
-                    append(field.type.label())
-                    if (field.required) append(" · 必填")
-                    if (field.options.isNotEmpty()) append(" · ${field.options.joinToString("/")}")
-                },
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall
-            )
-        }
-        IconButton(onClick = onDelete) {
-            Icon(Icons.Outlined.Close, contentDescription = "删除字段")
-        }
     }
 }
 
@@ -2829,6 +2529,7 @@ private fun RecordsScreen(
                     TimelineRecordItem(
                         record = record,
                         template = templates.firstOrNull { it.id == record.templateId },
+                        endedAtLabel = formatClockTime(record.endedAt),
                         isFirst = record.id == selectedDayRecords.first().id,
                         isLast = record.id == selectedDayRecords.last().id,
                         onEdit = { editingRecord = record }
@@ -2873,128 +2574,6 @@ private fun RecordsScreen(
                     choosingRecordDate = false
                 }
             )
-        }
-    }
-}
-
-@Composable
-private fun TimelineRecordItem(
-    record: PomodoroRecord,
-    template: RecordTemplate?,
-    isFirst: Boolean,
-    isLast: Boolean,
-    onEdit: () -> Unit
-) {
-    var expanded by rememberSaveable(record.id) { mutableStateOf(false) }
-    val answerCount = record.answers.size
-    val lineColor = Color(0xFFF59E0B)
-    val lineHeight = ((record.focusMinutes.coerceAtLeast(1) / 25f) * 74f).coerceIn(42f, 126f)
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.Top
-    ) {
-        Column(
-            modifier = Modifier.width(42.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Box(
-                modifier = Modifier
-                    .width(2.dp)
-                    .height(if (isFirst) 10.dp else 18.dp)
-                    .background(if (isFirst) Color.Transparent else lineColor.copy(alpha = 0.55f))
-            )
-            Surface(
-                modifier = Modifier.size(18.dp),
-                shape = RoundedCornerShape(8.dp),
-                color = lineColor
-            ) {}
-            Box(
-                modifier = Modifier
-                    .width(2.dp)
-                    .height(lineHeight.dp)
-                    .background(if (isLast) Color.Transparent else lineColor)
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                formatClockTime(record.endedAt),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.labelMedium
-            )
-            Text(
-                "${record.focusMinutes} 分钟",
-                color = lineColor,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-        ElevatedCard(
-            shape = RoundedCornerShape(8.dp),
-            modifier = Modifier
-                .weight(1f)
-                .clickable { expanded = !expanded },
-            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-        ) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Row(verticalAlignment = Alignment.Top) {
-                    Text(
-                        record.todoTitle,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = onEdit) {
-                        Icon(Icons.Outlined.Edit, contentDescription = "编辑记录")
-                    }
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        if (expanded) "收起记录详情" else "展开记录详情",
-                        color = MaterialTheme.colorScheme.tertiary,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Icon(
-                        if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.tertiary
-                    )
-                }
-
-                if (expanded) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.tertiaryContainer)
-                            .padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text(
-                            "${record.templateName} · $answerCount 条回答",
-                            color = MaterialTheme.colorScheme.onTertiaryContainer,
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        record.answers.forEach { answer ->
-                            val title = template?.fields?.firstOrNull { it.id == answer.fieldId }?.title ?: "字段"
-                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Text(title, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    answer.value.ifBlank { "未填写" },
-                                    color = MaterialTheme.colorScheme.onTertiaryContainer
-                                )
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 }
@@ -3054,6 +2633,17 @@ private fun SettingsScreen(
         item {
             LlmProviderListCard(
                 providers = appState.llmProviders,
+                newProvider = {
+                    LlmProviderSettings(
+                        id = newId(),
+                        providerKey = "custom",
+                        name = "自定义 Provider"
+                    )
+                },
+                defaultProviderIds = defaultLlmProviders().map { it.id }.toSet(),
+                providerPresets = defaultLlmProviders(),
+                providerLabel = { it.agentProviderLabel() },
+                fetchModels = ::fetchLlmModels,
                 onUpsert = { provider ->
                     val exists = appState.llmProviders.any { it.id == provider.id }
                     val providers = if (exists) {
@@ -3079,737 +2669,18 @@ private fun SettingsScreen(
             RecordPolishProviderCard(
                 providers = appState.llmProviders,
                 selectedProviderId = appState.recordPolishProviderId,
+                providerLabel = { it.agentProviderLabel() },
+                providerStatus = { provider ->
+                    provider?.let {
+                        if (it.isConfiguredForChat()) "已配置" else "请先补全模型和 API Key"
+                    } ?: "未选择 Provider"
+                },
                 onProviderSelected = { providerId ->
                     onStateChange(appState.copy(recordPolishProviderId = providerId))
                 }
             )
         }
     }
-}
-
-@Composable
-private fun WebDevSyncSettingsCard(
-    settings: WebDevSyncSettings,
-    syncing: Boolean,
-    onSync: () -> Unit,
-    onChange: (WebDevSyncSettings) -> Unit
-) {
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text("坚果云 WebDAV 同步", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "协议强制 HTTPS · /${JIANGUOYUN_WEBDAV_FOLDER_NAME}/",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Switch(
-                    checked = settings.enabled,
-                    onCheckedChange = {
-                        onChange(
-                            settings.copy(
-                                enabled = it,
-                                endpoint = JIANGUOYUN_WEBDAV_BASE_URL,
-                                cloudProvider = JIANGUOYUN_WEBDAV_PROVIDER
-                            )
-                        )
-                    }
-                )
-            }
-            OutlinedTextField(
-                value = JIANGUOYUN_WEBDAV_FOLDER_URL,
-                onValueChange = { },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("同步目录（固定）") },
-                singleLine = true,
-                readOnly = true
-            )
-            OutlinedTextField(
-                value = JIANGUOYUN_WEBDAV_SYNC_FILE_URL,
-                onValueChange = { },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("同步文件（固定）") },
-                singleLine = true,
-                readOnly = true
-            )
-            OutlinedTextField(
-                value = settings.username,
-                onValueChange = {
-                    onChange(
-                        settings.copy(
-                            username = it.take(120),
-                            endpoint = JIANGUOYUN_WEBDAV_BASE_URL,
-                            cloudProvider = JIANGUOYUN_WEBDAV_PROVIDER
-                        )
-                    )
-                },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("用户名（坚果云注册邮箱）") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email)
-            )
-            OutlinedTextField(
-                value = settings.authToken,
-                onValueChange = { value ->
-                    onChange(
-                        settings.copy(
-                            authToken = value.take(240),
-                            endpoint = JIANGUOYUN_WEBDAV_BASE_URL,
-                            cloudProvider = JIANGUOYUN_WEBDAV_PROVIDER
-                        )
-                    )
-                },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("密码（第三方应用密码）") },
-                singleLine = true,
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
-            )
-            Text(
-                "必须使用网页端“安全选项”中生成的第三方应用密码，不可使用坚果云登录密码。",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall
-            )
-            Button(
-                enabled = settings.enabled &&
-                    settings.username.isNotBlank() &&
-                    settings.authToken.isNotBlank() &&
-                    !syncing,
-                onClick = onSync,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                if (syncing) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                } else {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_webdav_sync),
-                        contentDescription = "主动同步",
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                Text(if (syncing) "正在同步" else "立即同步")
-            }
-        }
-    }
-}
-
-@Composable
-private fun LlmProviderListCard(
-    providers: List<LlmProviderSettings>,
-    onUpsert: (LlmProviderSettings) -> Unit,
-    onDelete: (LlmProviderSettings) -> Unit
-) {
-    var editingProvider by remember { mutableStateOf<LlmProviderSettings?>(null) }
-    var providerMenuExpanded by remember { mutableStateOf(false) }
-    var selectedProviderId by rememberSaveable(providers.map { it.id }.joinToString("|")) {
-        mutableStateOf(providers.firstOrNull()?.id.orEmpty())
-    }
-    val selectedProvider = providers.firstOrNull { it.id == selectedProviderId }
-        ?: providers.firstOrNull()
-
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "大模型 Provider",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                TextButton(
-                    onClick = {
-                        editingProvider = LlmProviderSettings(
-                            id = newId(),
-                            providerKey = "custom",
-                            name = "自定义 Provider"
-                        )
-                    }
-                ) {
-                    Icon(Icons.Outlined.Add, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("自定义")
-                }
-            }
-            Box {
-                OutlinedButton(
-                    onClick = { providerMenuExpanded = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        selectedProvider?.agentProviderLabel() ?: "选择 Provider",
-                        modifier = Modifier.weight(1f),
-                        textAlign = TextAlign.Start,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
-                }
-                DropdownMenu(
-                    expanded = providerMenuExpanded,
-                    onDismissRequest = { providerMenuExpanded = false }
-                ) {
-                    providers.forEach { provider ->
-                        DropdownMenuItem(
-                            text = { Text(provider.agentProviderLabel()) },
-                            onClick = {
-                                selectedProviderId = provider.id
-                                providerMenuExpanded = false
-                            }
-                        )
-                    }
-                }
-            }
-            selectedProvider?.let { provider ->
-                LlmProviderRow(provider = provider, onClick = { editingProvider = provider })
-            }
-        }
-    }
-
-    editingProvider?.let { provider ->
-        LlmProviderEditDialog(
-            initialProvider = provider,
-            allowDelete = provider.id !in defaultLlmProviders().map { it.id },
-            onDismiss = { editingProvider = null },
-            onSave = {
-                onUpsert(it)
-                editingProvider = null
-            },
-            onDelete = {
-                onDelete(provider)
-                editingProvider = null
-            }
-        )
-    }
-}
-
-@Composable
-private fun LlmProviderEditDialog(
-    initialProvider: LlmProviderSettings,
-    allowDelete: Boolean,
-    onDismiss: () -> Unit,
-    onSave: (LlmProviderSettings) -> Unit,
-    onDelete: () -> Unit
-) {
-    val scope = rememberCoroutineScope()
-    var provider by remember(initialProvider.id) { mutableStateOf(initialProvider) }
-    var providerMenuExpanded by remember { mutableStateOf(false) }
-    var modelMenuExpanded by remember { mutableStateOf(false) }
-    var fetchedModels by remember { mutableStateOf<List<String>>(emptyList()) }
-    var loadingModels by remember { mutableStateOf(false) }
-    var modelFetchError by remember { mutableStateOf<String?>(null) }
-    val apiKeyMask = "***"
-    val apiKeyDisplay = if (provider.apiKey.isBlank()) "" else apiKeyMask
-    val providerPresets = defaultLlmProviders()
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = { onSave(provider) }) {
-                Text("保存")
-            }
-        },
-        dismissButton = {
-            Row {
-                if (allowDelete) {
-                    TextButton(onClick = onDelete) {
-                        Text("删除")
-                    }
-                }
-                TextButton(onClick = onDismiss) {
-                    Text("取消")
-                }
-            }
-        },
-        title = { Text("编辑 Provider") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Box {
-                    OutlinedButton(
-                        onClick = { providerMenuExpanded = true },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(provider.name, modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
-                        Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
-                    }
-                    DropdownMenu(
-                        expanded = providerMenuExpanded,
-                        onDismissRequest = { providerMenuExpanded = false }
-                    ) {
-                        providerPresets.forEach { preset ->
-                            DropdownMenuItem(
-                                text = { Text(preset.name) },
-                                onClick = {
-                                    provider = provider.copy(
-                                        providerKey = preset.providerKey,
-                                        name = preset.name,
-                                        endpoint = provider.endpoint.ifBlank { preset.endpoint }
-                                    )
-                                    providerMenuExpanded = false
-                                }
-                            )
-                        }
-                    }
-                }
-                OutlinedTextField(
-                    value = provider.name,
-                    onValueChange = { provider = provider.copy(name = it.take(40)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("显示名称") },
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    value = provider.endpoint,
-                    onValueChange = {
-                        provider = provider.copy(endpoint = it.take(240))
-                        fetchedModels = emptyList()
-                        modelFetchError = null
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("接口地址") },
-                    singleLine = true
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedButton(
-                        enabled = provider.endpoint.isNotBlank() && !loadingModels,
-                        onClick = {
-                            scope.launch {
-                                loadingModels = true
-                                modelFetchError = null
-                                fetchedModels = runCatching {
-                                    fetchLlmModels(provider.endpoint, provider.apiKey)
-                                }.getOrElse { error ->
-                                    modelFetchError = error.message ?: "获取模型失败"
-                                    emptyList()
-                                }
-                                loadingModels = false
-                            }
-                        }
-                    ) {
-                        if (loadingModels) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp
-                            )
-                        } else {
-                            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
-                        }
-                        Spacer(Modifier.width(6.dp))
-                        Text("获取模型")
-                    }
-                    Box(Modifier.weight(1f)) {
-                        OutlinedButton(
-                            enabled = fetchedModels.isNotEmpty(),
-                            onClick = { modelMenuExpanded = true },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                provider.modelName.ifBlank { "选择模型" },
-                                modifier = Modifier.weight(1f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                textAlign = TextAlign.Start
-                            )
-                            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
-                        }
-                        DropdownMenu(
-                            expanded = modelMenuExpanded,
-                            onDismissRequest = { modelMenuExpanded = false }
-                        ) {
-                            fetchedModels.forEach { model ->
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            model,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    },
-                                    onClick = {
-                                        provider = provider.copy(modelName = model)
-                                        modelMenuExpanded = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-                if (fetchedModels.isEmpty()) {
-                    OutlinedTextField(
-                        value = provider.modelName,
-                        onValueChange = { provider = provider.copy(modelName = it.take(80)) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("模型名称") },
-                        singleLine = true
-                    )
-                }
-                modelFetchError?.let { error ->
-                    Text(error, color = MaterialTheme.colorScheme.error)
-                }
-                OutlinedTextField(
-                    value = apiKeyDisplay,
-                    onValueChange = { value ->
-                        provider = when {
-                            value.isBlank() -> provider.copy(apiKey = "")
-                            value == apiKeyMask -> provider
-                            value.startsWith(apiKeyMask) -> {
-                                provider.copy(apiKey = value.removePrefix(apiKeyMask).take(240))
-                            }
-                            else -> provider.copy(apiKey = value.take(240))
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("API Key") },
-                    singleLine = true
-                )
-            }
-        }
-    )
-}
-
-@Composable
-private fun RecordPolishProviderCard(
-    providers: List<LlmProviderSettings>,
-    selectedProviderId: String,
-    onProviderSelected: (String) -> Unit
-) {
-    var providerMenuExpanded by remember { mutableStateOf(false) }
-    val selectedProvider = providers.firstOrNull { it.id == selectedProviderId }
-
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("总结润色模型", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Box {
-                OutlinedButton(
-                    enabled = providers.isNotEmpty(),
-                    onClick = { providerMenuExpanded = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        selectedProvider?.agentProviderLabel() ?: "选择 Provider",
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Start
-                    )
-                    Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
-                }
-                DropdownMenu(
-                    expanded = providerMenuExpanded,
-                    onDismissRequest = { providerMenuExpanded = false }
-                ) {
-                    providers.forEach { provider ->
-                        DropdownMenuItem(
-                            text = { Text(provider.agentProviderLabel()) },
-                            onClick = {
-                                onProviderSelected(provider.id)
-                                providerMenuExpanded = false
-                            }
-                        )
-                    }
-                }
-            }
-            Text(
-                selectedProvider?.let {
-                    if (it.isConfiguredForChat()) "已配置" else "请先补全模型和 API Key"
-                } ?: "未选择 Provider",
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun UnifiedAgentProviderCard(
-    agents: List<AgentSettings>,
-    providers: List<LlmProviderSettings>,
-    onProviderSelected: (String) -> Unit
-) {
-    val agent = selectUnifiedAgent(agents)
-    var providerMenuExpanded by remember { mutableStateOf(false) }
-    val selectedProvider = providers.firstOrNull { it.id == agent?.providerId }
-
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("对话模型", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Box {
-                OutlinedButton(
-                    enabled = providers.isNotEmpty(),
-                    onClick = { providerMenuExpanded = true },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        selectedProvider?.agentProviderLabel() ?: "选择 Provider",
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        textAlign = TextAlign.Start
-                    )
-                    Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
-                }
-                DropdownMenu(
-                    expanded = providerMenuExpanded,
-                    onDismissRequest = { providerMenuExpanded = false }
-                ) {
-                    providers.forEach { provider ->
-                        DropdownMenuItem(
-                            text = { Text(provider.agentProviderLabel()) },
-                            onClick = {
-                                onProviderSelected(provider.id)
-                                providerMenuExpanded = false
-                            }
-                        )
-                    }
-                }
-            }
-            Text(
-                selectedProvider?.let {
-                    if (it.isConfiguredForChat()) "已配置" else "请先在 Provider 中补全模型和 API Key"
-                } ?: "未选择 Provider",
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun AgentListCard(
-    agents: List<AgentSettings>,
-    providers: List<LlmProviderSettings>,
-    nickname: String,
-    onUpsert: (AgentSettings) -> Unit,
-    onDelete: (AgentSettings) -> Unit
-) {
-    var editingAgent by remember { mutableStateOf<AgentSettings?>(null) }
-
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "Agent",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                TextButton(
-                    onClick = {
-                        editingAgent = AgentSettings(
-                            id = newId(),
-                            name = "新 Agent",
-                            providerId = providers.firstOrNull()?.id.orEmpty(),
-                            permissions = AgentDataPermissions()
-                        )
-                    }
-                ) {
-                    Icon(Icons.Outlined.Add, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("添加")
-                }
-            }
-            if (agents.isEmpty()) {
-                Text("还没有 Agent。", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            } else {
-                agents.forEach { agent ->
-                    AgentRow(
-                        agent = agent,
-                        providerLabel = providers.firstOrNull {
-                            it.id == agent.providerId
-                        }?.agentProviderLabel() ?: "未选择模型",
-                        permissionsLabel = agent.permissions.label(),
-                        onClick = { editingAgent = agent }
-                    )
-                }
-            }
-        }
-    }
-
-    editingAgent?.let { agent ->
-        AgentEditDialog(
-            initialAgent = agent,
-            providers = providers,
-            nickname = nickname,
-            onDismiss = { editingAgent = null },
-            onSave = {
-                onUpsert(it)
-                editingAgent = null
-            },
-            onDelete = {
-                onDelete(agent)
-                editingAgent = null
-            }
-        )
-    }
-}
-
-@Composable
-private fun AgentEditDialog(
-    initialAgent: AgentSettings,
-    providers: List<LlmProviderSettings>,
-    nickname: String,
-    onDismiss: () -> Unit,
-    onSave: (AgentSettings) -> Unit,
-    onDelete: () -> Unit
-) {
-    var agent by remember(initialAgent.id) { mutableStateOf(initialAgent) }
-    var providerMenuExpanded by remember { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = { onSave(agent) }) {
-                Text("保存")
-            }
-        },
-        dismissButton = {
-            Row {
-                TextButton(onClick = onDelete) {
-                    Text("删除")
-                }
-                TextButton(onClick = onDismiss) {
-                    Text("取消")
-                }
-            }
-        },
-        title = { Text("编辑 Agent") },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("启用", modifier = Modifier.weight(1f))
-                    Switch(
-                        checked = agent.enabled,
-                        onCheckedChange = { agent = agent.copy(enabled = it) }
-                    )
-                }
-                OutlinedTextField(
-                    value = agent.name,
-                    onValueChange = { agent = agent.copy(name = it.take(24)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Agent 名称") },
-                    singleLine = true
-                )
-                Box {
-                    OutlinedButton(
-                        onClick = { providerMenuExpanded = true },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            providers.firstOrNull {
-                                it.id == agent.providerId
-                            }?.agentProviderLabel() ?: "选择模型",
-                            modifier = Modifier.weight(1f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            textAlign = TextAlign.Start
-                        )
-                        Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
-                    }
-                    DropdownMenu(
-                        expanded = providerMenuExpanded,
-                        onDismissRequest = { providerMenuExpanded = false }
-                    ) {
-                        providers.forEach { provider ->
-                            DropdownMenuItem(
-                                text = { Text(provider.agentProviderLabel()) },
-                                onClick = {
-                                    agent = agent.copy(providerId = provider.id)
-                                    providerMenuExpanded = false
-                                }
-                            )
-                        }
-                    }
-                }
-                Text("数据权限", fontWeight = FontWeight.SemiBold)
-                PermissionCheckbox(
-                    checked = agent.permissions.dailyRecords,
-                    label = "每日记录",
-                    onCheckedChange = {
-                        agent = agent.copy(
-                            permissions = agent.permissions.copy(dailyRecords = it)
-                        )
-                    }
-                )
-                PermissionCheckbox(
-                    checked = agent.permissions.todos,
-                    label = "待办",
-                    onCheckedChange = {
-                        agent = agent.copy(
-                            permissions = agent.permissions.copy(todos = it)
-                        )
-                    }
-                )
-                PermissionCheckbox(
-                    checked = agent.permissions.templates,
-                    label = "模板",
-                    onCheckedChange = {
-                        agent = agent.copy(
-                            permissions = agent.permissions.copy(templates = it)
-                        )
-                    }
-                )
-                TextButton(
-                    onClick = {
-                        val prompt = agent.prompt
-                        val nextPrompt = if ("{nickname}" in prompt || nickname in prompt) {
-                            prompt
-                        } else {
-                            "请称呼我为「$nickname」。$prompt"
-                        }
-                        agent = agent.copy(prompt = nextPrompt.take(500))
-                    }
-                ) {
-                    Icon(Icons.Outlined.Add, contentDescription = null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("插入昵称")
-                }
-                OutlinedTextField(
-                    value = agent.prompt,
-                    onValueChange = { agent = agent.copy(prompt = it.take(500)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("提示词") },
-                    minLines = 3
-                )
-            }
-        }
-    )
 }
 
 @Composable

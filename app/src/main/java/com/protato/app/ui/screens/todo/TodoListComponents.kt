@@ -3,12 +3,15 @@ package com.protato.app.ui.screens.todo
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
@@ -29,6 +32,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.protato.app.TodoItem
+import com.protato.app.ui.components.TodoDateChip
+import com.protato.app.ui.components.TodoPomodoroChip
+import com.protato.app.ui.components.TodoReminderChip
+import com.protato.app.ui.components.TodoTagChip
 
 @Composable
 fun TodoSectionHeader(
@@ -129,6 +137,79 @@ fun TodoSelectionBar(
                 contentDescription = "删除所选待办",
                 tint = MaterialTheme.colorScheme.error
             )
+        }
+    }
+}
+
+@Composable
+fun TodoDraftMetadataRow(
+    plannedPomodoros: Int,
+    dueDate: String?,
+    reminderAt: Long?,
+    tags: List<String>,
+    dayLabel: (String) -> String,
+    timeLabel: (Long) -> String,
+    tagColor: (String) -> Color
+) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        item { TodoPomodoroChip(plannedPomodoros) }
+        dueDate?.let { dueDate ->
+            item { TodoDateChip(dayLabel(dueDate)) }
+        }
+        reminderAt?.let { reminderAt ->
+            item { TodoReminderChip(timeLabel(reminderAt)) }
+        }
+        items(tags, key = { it }) { tag ->
+            TodoTagChip(tag, tagColor(tag))
+        }
+    }
+}
+
+@Composable
+fun TodoMetadataStrip(
+    todo: TodoItem,
+    dayLabel: (String) -> String,
+    timeLabel: (Long) -> String,
+    tagColor: (String) -> Color,
+    includeTags: Boolean = true
+) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        item { TodoPomodoroChip(todo.plannedPomodoros) }
+        todo.dueDate?.let { dueDate ->
+            item { TodoDateChip(dayLabel(dueDate)) }
+        }
+        todo.reminderAt?.let { reminderAt ->
+            item { TodoReminderChip(timeLabel(reminderAt)) }
+        }
+        if (includeTags) {
+            items(todo.tags, key = { it }) { tag ->
+                TodoTagChip(tag, tagColor(tag))
+            }
+        }
+    }
+}
+
+@Composable
+fun TodoExpandedDetails(
+    todo: TodoItem,
+    tagColor: (String) -> Color
+) {
+    if (todo.tags.isEmpty()) return
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            items(todo.tags, key = { it }) { tag ->
+                TodoTagChip(tag, tagColor(tag))
+            }
         }
     }
 }
