@@ -13,7 +13,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
-import androidx.compose.material.icons.automirrored.outlined.ViewList
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
@@ -32,7 +31,6 @@ import com.protato.app.ui.components.Header
 
 @Composable
 fun MoreScreen(
-    onOpenTemplates: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     LazyColumn(
@@ -41,15 +39,7 @@ fun MoreScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
-            Header(title = "更多", subtitle = "模板、设置和低频配置入口")
-        }
-        item {
-            MoreEntryCard(
-                icon = Icons.AutoMirrored.Outlined.ViewList,
-                title = "记录模板",
-                subtitle = "管理番茄结束后的复盘字段",
-                onClick = onOpenTemplates
-            )
+            Header(title = "更多", subtitle = "设置和低频配置入口")
         }
         item {
             MoreEntryCard(

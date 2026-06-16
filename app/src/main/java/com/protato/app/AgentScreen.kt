@@ -177,6 +177,7 @@ import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -186,18 +187,22 @@ import org.json.JSONObject
 @Composable
 internal fun AgentScreen(
     appState: AppState,
+    input: String,
+    loading: Boolean,
+    errorText: String?,
+    sessionState: AgentSessionState,
+    turnScope: CoroutineScope,
+    onInputChange: (String) -> Unit,
+    onLoadingChange: (Boolean) -> Unit,
+    onErrorTextChange: (String?) -> Unit,
+    onSessionStateChange: (AgentSessionState) -> Unit,
     onEvent: (ProtatoEvent) -> Unit
 ) {
-    val scope = rememberCoroutineScope()
     val nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME }
     val agent = selectUnifiedAgent(appState.agents)
     val provider = agent?.providerId?.let { providerId ->
         appState.llmProviders.firstOrNull { it.id == providerId }
     } ?: appState.llmProviders.firstOrNull { it.isConfiguredForChat() }
-    var input by rememberSaveable { mutableStateOf("") }
-    var loading by rememberSaveable { mutableStateOf(false) }
-    var errorText by rememberSaveable { mutableStateOf<String?>(null) }
-    var sessionState by remember { mutableStateOf(AgentSessionState()) }
     val listState = rememberLazyListState()
     val canStartNewConversation = !loading &&
         (
@@ -241,12 +246,12 @@ internal fun AgentScreen(
                 drafts = sessionState.pendingTodos,
                 onAdd = {
                     val drafts = sessionState.pendingTodos
-                    sessionState = sessionState.acceptTodoDrafts()
+                    onSessionStateChange(sessionState.acceptTodoDrafts())
                     onEvent(ProtatoEvent.AcceptAgentTodoDrafts(drafts))
                 },
                 onDismiss = {
                     val count = sessionState.pendingTodos.size
-                    sessionState = sessionState.rejectTodoDrafts()
+                    onSessionStateChange(sessionState.rejectTodoDrafts())
                     onEvent(ProtatoEvent.RejectAgentTodoDrafts(count))
                 }
             )
@@ -258,12 +263,12 @@ internal fun AgentScreen(
                 todos = appState.todos,
                 onApply = {
                     val edits = sessionState.pendingTodoEdits
-                    sessionState = sessionState.acceptTodoEdits()
+                    onSessionStateChange(sessionState.acceptTodoEdits())
                     onEvent(ProtatoEvent.AcceptAgentTodoEdits(edits))
                 },
                 onDismiss = {
                     val count = sessionState.pendingTodoEdits.size
-                    sessionState = sessionState.rejectTodoEdits()
+                    onSessionStateChange(sessionState.rejectTodoEdits())
                     onEvent(ProtatoEvent.RejectAgentTodoEdits(count))
                 }
             )
@@ -278,7 +283,7 @@ internal fun AgentScreen(
         ) {
             OutlinedTextField(
                 value = input,
-                onValueChange = { input = it.take(1200) },
+                onValueChange = { onInputChange(it.take(1200)) },
                 modifier = Modifier.weight(1f),
                 label = { Text("和对话助手说话") },
                 minLines = 1,
@@ -287,9 +292,9 @@ internal fun AgentScreen(
             IconButton(
                 enabled = canStartNewConversation,
                 onClick = {
-                    input = ""
-                    sessionState = sessionState.reset()
-                    errorText = null
+                    onInputChange("")
+                    onSessionStateChange(sessionState.reset())
+                    onErrorTextChange(null)
                     onEvent(ProtatoEvent.ClearAgentMessages)
                 }
             ) {
@@ -299,16 +304,16 @@ internal fun AgentScreen(
                 enabled = input.isNotBlank() && !loading,
                 onClick = {
                     val text = input.trim()
-                    input = ""
-                    errorText = null
+                    onInputChange("")
+                    onErrorTextChange(null)
                     val userState = appState.copy(
                         agentMessages = appState.agentMessages.appendAgentMessage("user", text)
                     )
                     onEvent(ProtatoEvent.AppendAgentMessage("user", text))
                     val turnSessionState = sessionState
-                    sessionState = sessionState.startTurn()
-                    scope.launch {
-                        loading = true
+                    onSessionStateChange(sessionState.startTurn())
+                    turnScope.launch {
+                        onLoadingChange(true)
                         val result = runAgentTurn(
                             text = text,
                             userState = userState,
@@ -316,12 +321,13 @@ internal fun AgentScreen(
                             provider = provider,
                             nickname = nickname,
                             handledTodoDraftKeys = turnSessionState.handledTodoDraftKeySet,
-                            handledTodoEditKeys = turnSessionState.handledTodoEditKeySet
+                            handledTodoEditKeys = turnSessionState.handledTodoEditKeySet,
+                            hasPendingActions = turnSessionState.hasPendingActions
                         )
-                        errorText = result.errorText
+                        onErrorTextChange(result.errorText)
                         onEvent(ProtatoEvent.AppendAgentMessage("assistant", result.reply))
-                        sessionState = sessionState.completeTurn(result)
-                        loading = false
+                        onSessionStateChange(turnSessionState.completeTurn(result))
+                        onLoadingChange(false)
                     }
                 }
             ) {

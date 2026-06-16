@@ -8,6 +8,7 @@ import com.protato.app.PomodoroRecord
 import com.protato.app.RecordTemplate
 import com.protato.app.TimerMode
 import com.protato.app.TimerSession
+import com.protato.app.TodoCompletionReview
 import com.protato.app.TodoDraft
 import com.protato.app.TodoEditDraft
 import com.protato.app.TodoItem
@@ -17,6 +18,7 @@ internal sealed interface ProtatoEvent {
     data class AddTodo(val todo: TodoItem) : TodoProtatoEvent
     data class AddTodos(val todos: List<TodoItem>) : TodoProtatoEvent
     data class ToggleTodo(val todo: TodoItem) : TodoProtatoEvent
+    data class CompleteTodoWithReview(val todo: TodoItem, val review: TodoCompletionReview) : TodoProtatoEvent
     data class DeleteTodo(val todo: TodoItem) : TodoProtatoEvent
     data class DeleteTodos(val todoIds: Set<String>) : TodoProtatoEvent
     data class UpdateTodo(val todo: TodoItem) : TodoProtatoEvent

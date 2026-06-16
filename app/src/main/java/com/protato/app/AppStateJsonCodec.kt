@@ -82,9 +82,36 @@ private fun JSONArray.toTodos(): List<TodoItem> = mapObjects { item ->
         tags = item.optJSONArray("tags")?.toStringList().orEmpty(),
         dueDate = item.optString("dueDate").takeIf { it.isNotBlank() },
         plannedPomodoros = item.optInt("plannedPomodoros", 1).coerceIn(1, 24),
-        reminderAt = item.optLong("reminderAt", 0L).takeIf { it > 0L }
+        reminderAt = item.optLong("reminderAt", 0L).takeIf { it > 0L },
+        complexity = item.optString("complexity").toTodoComplexity(),
+        completionReview = item.optJSONObject("completionReview")?.toTodoCompletionReview(),
+        subtasks = item.optJSONArray("subtasks")?.toTodoSubtasks().orEmpty(),
+        summary = item.optString("summary")
     )
 }.filter { it.id.isNotBlank() && it.title.isNotBlank() }
+
+private fun JSONArray.toTodoSubtasks(): List<TodoSubtask> = mapObjects { item ->
+    TodoSubtask(
+        id = item.optString("id"),
+        title = item.optString("title"),
+        completed = item.optBoolean("completed")
+    )
+}.filter { it.id.isNotBlank() && it.title.isNotBlank() }
+
+private fun String.toTodoComplexity(): TodoComplexity {
+    return runCatching { TodoComplexity.valueOf(this) }.getOrDefault(TodoComplexity.Simple)
+}
+
+private fun JSONObject.toTodoCompletionReview(): TodoCompletionReview? {
+    return TodoCompletionReview(
+        problems = optString("problems").trim(),
+        solution = optString("solution").trim(),
+        blockers = optString("blockers").trim(),
+        completedAt = optLong("completedAt", System.currentTimeMillis())
+    ).takeIf {
+        it.problems.isNotBlank() || it.solution.isNotBlank() || it.blockers.isNotBlank()
+    }
+}
 
 private fun JSONArray.toTemplates(): List<RecordTemplate> = mapObjects { item ->
     RecordTemplate(
@@ -261,6 +288,21 @@ private fun TodoItem.toJson(): JSONObject = JSONObject()
     .put("dueDate", dueDate ?: "")
     .put("plannedPomodoros", plannedPomodoros)
     .put("reminderAt", reminderAt ?: 0L)
+    .put("complexity", complexity.name)
+    .put("completionReview", completionReview?.toJson() ?: JSONObject.NULL)
+    .put("subtasks", subtasks.toJsonArray { it.toJson() })
+    .put("summary", summary)
+
+private fun TodoSubtask.toJson(): JSONObject = JSONObject()
+    .put("id", id)
+    .put("title", title)
+    .put("completed", completed)
+
+private fun TodoCompletionReview.toJson(): JSONObject = JSONObject()
+    .put("problems", problems)
+    .put("solution", solution)
+    .put("blockers", blockers)
+    .put("completedAt", completedAt)
 
 private fun RecordTemplate.toJson(): JSONObject = JSONObject()
     .put("id", id)

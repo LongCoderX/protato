@@ -7,6 +7,7 @@ internal sealed interface AgentIntent {
     data class Chat(val topic: String?) : AgentIntent
     data class PlanTodos(val rawGoal: String) : AgentIntent
     data class UpdateTodo(val targetHint: String, val changeHint: String) : AgentIntent
+    data class MoveOpenTodosToToday(val targetHint: String) : AgentIntent
     data class QueryTodos(val query: String) : AgentIntent
     data class SummarizeRecords(val rangeHint: String?) : AgentIntent
     data class ConfirmPendingAction(val targetHint: String?) : AgentIntent
@@ -31,6 +32,11 @@ internal class AgentIntentResolver {
     fun resolve(request: AgentIntentRequest): AgentIntentResult {
         val text = request.userText.trim()
         val lowered = text.lowercase(Locale.getDefault())
+        val recentContext = request.recentMessages
+            .takeLast(6)
+            .joinToString("\n") { "${it.role}:${it.content}" }
+            .lowercase(Locale.getDefault())
+        val hasPlanningContext = recentContext.hasAny(planningContextWords)
         if (text.isBlank()) {
             return clarify("用户输入为空")
         }
@@ -58,21 +64,28 @@ internal class AgentIntentResolver {
                 reason = "用户询问复盘或总结"
             )
         }
-        if (lowered.hasAny(todoUpdateWords)) {
+        if (lowered.requestsMovingOpenTodosToToday()) {
+            return AgentIntentResult(
+                intent = AgentIntent.MoveOpenTodosToToday(targetHint = text),
+                confidence = 0.86f,
+                reason = "用户想把未完成待办安排到今天"
+            )
+        }
+        if (lowered.hasAny(todoQueryWords)) {
+            return AgentIntentResult(
+                intent = AgentIntent.QueryTodos(query = text),
+                confidence = 0.82f,
+                reason = "用户查询待办"
+            )
+        }
+        if (lowered.looksLikeTodoUpdateRequest()) {
             return AgentIntentResult(
                 intent = AgentIntent.UpdateTodo(targetHint = text, changeHint = text),
                 confidence = 0.78f,
                 reason = "用户表达修改已有待办"
             )
         }
-        if (lowered.hasAny(todoQueryWords)) {
-            return AgentIntentResult(
-                intent = AgentIntent.QueryTodos(query = text),
-                confidence = 0.72f,
-                reason = "用户查询待办"
-            )
-        }
-        if (text.looksLikeTodoPlanningRequest()) {
+        if (text.looksLikeTodoPlanningRequest(hasPlanningContext)) {
             return AgentIntentResult(
                 intent = AgentIntent.PlanTodos(rawGoal = text),
                 confidence = 0.8f,
@@ -99,9 +112,42 @@ private val confirmWords = listOf("可以", "确认", "同意", "就这样", "�
 private val rejectWords = listOf("不要", "取消", "拒绝", "算了", "不是", "不对")
 private val ambiguousPendingReferences = listOf("第二个", "第一个", "这个", "那个", "就这样", "按这个", "按第二个")
 private val recordSummaryWords = listOf("总结", "复盘", "效率", "记录", "最近表现")
-private val todoUpdateWords = listOf("改", "修改", "调整", "挪到", "延期", "提前", "提醒")
-private val todoQueryWords = listOf("有哪些待办", "查一下", "看看待办", "今天还有", "未完成")
+private val planningContextWords = listOf("待办", "任务", "计划", "安排", "规划", "拆解", "整理成", "生成待办", "创建待办")
+private val todoQueryWords = listOf(
+    "有哪些待办",
+    "有什么任务",
+    "什么任务",
+    "查一下",
+    "看看待办",
+    "今天还有",
+    "今天有什么",
+    "未完成",
+    "没完成",
+    "没有完成",
+    "还没做",
+    "没做完",
+    "已完成",
+    "完成了什么",
+    "今天做了什么",
+    "最近完成了什么",
+    "需要做什么",
+    "要做什么",
+    "该做什么"
+)
 
 private fun String.hasAny(words: List<String>): Boolean {
     return words.any { it in this }
+}
+
+private fun String.requestsMovingOpenTodosToToday(): Boolean {
+    val targetOpenTodos = hasAny(listOf("未完成", "没完成", "还没做", "没有完成", "待办"))
+    val toToday = hasAny(listOf("今天", "今日"))
+    val moveVerb = hasAny(listOf("改到", "挪到", "移到", "放到", "安排到", "调到", "设为"))
+    return targetOpenTodos && toToday && moveVerb
+}
+
+private fun String.looksLikeTodoUpdateRequest(): Boolean {
+    val updateVerb = hasAny(listOf("修改", "调整", "挪到", "改到", "改成", "延期", "提前", "提醒", "转到"))
+    val hasTarget = hasAny(listOf("任务", "待办", "这个", "那个", "日期", "今天", "明天", "后天"))
+    return updateVerb && hasTarget
 }

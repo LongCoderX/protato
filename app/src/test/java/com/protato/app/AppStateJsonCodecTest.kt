@@ -34,7 +34,19 @@ class AppStateJsonCodecTest {
                     tags = listOf("refactor", "data"),
                     dueDate = "2026-06-12",
                     plannedPomodoros = 3,
-                    reminderAt = 2_000L
+                    reminderAt = 2_000L,
+                    complexity = TodoComplexity.Complex,
+                    completionReview = TodoCompletionReview(
+                        problems = "状态入口太多",
+                        solution = "收敛到 reducer",
+                        blockers = "还需要继续拆 UI",
+                        completedAt = 2_500L
+                    ),
+                    subtasks = listOf(
+                        TodoSubtask(id = "sub-1", title = "拆 codec", completed = true),
+                        TodoSubtask(id = "sub-2", title = "补测试")
+                    ),
+                    summary = "1/2 个子任务完成。下一步：补测试。"
                 )
             ),
             templates = listOf(template),

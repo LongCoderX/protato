@@ -64,6 +64,7 @@ import androidx.compose.material.icons.outlined.WorkHistory
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
@@ -107,6 +108,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -181,12 +183,14 @@ internal fun TodoScreen(
     nickname: String,
     onAdd: (TodoItem) -> Unit,
     onToggle: (TodoItem) -> Unit,
+    onCompleteWithReview: (TodoItem, TodoCompletionReview) -> Unit,
     onDelete: (TodoItem) -> Unit,
     onUpdate: (TodoItem) -> Unit,
     onDeleteMany: (Set<String>) -> Unit,
     onAddMany: (List<TodoItem>) -> Unit
 ) {
     var editingTodo by remember { mutableStateOf<TodoItem?>(null) }
+    var reviewingTodo by remember { mutableStateOf<TodoItem?>(null) }
     var showingAiTodo by remember { mutableStateOf(false) }
     var showingDatePicker by rememberSaveable { mutableStateOf(false) }
     var showingTagFilter by rememberSaveable { mutableStateOf(false) }
@@ -196,7 +200,7 @@ internal fun TodoScreen(
     var showCompletedTodos by rememberSaveable { mutableStateOf(false) }
     val selecting = selectedTodoIds.isNotEmpty()
     val todayKey = dayKey(System.currentTimeMillis())
-    var selectedTodoDate by rememberSaveable { mutableStateOf<String?>(todayKey) }
+    var selectedTodoDate by rememberSaveable { mutableStateOf<String?>(null) }
     val availableTags = remember(todos) {
         todos.flatMap { it.tags }
             .distinctBy { it.lowercase(Locale.getDefault()) }
@@ -217,7 +221,7 @@ internal fun TodoScreen(
     }
     val visibleIncompleteTodos = remember(visibleTodos) { visibleTodos.filterNot { it.completed } }
     val visibleCompletedTodos = remember(visibleTodos) { visibleTodos.filter { it.completed } }
-    val dateLabel = selectedTodoDate?.let(::formatDayLabel) ?: "无日期"
+    val dateLabel = selectedTodoDate?.let(::formatDayLabel) ?: "收集箱"
 
     Column(
         modifier = Modifier
@@ -318,7 +322,16 @@ internal fun TodoScreen(
                         todo = todo,
                         selected = todo.id in selectedTodoIds,
                         selecting = selecting,
-                        onToggle = { onToggle(todo) },
+                        onToggle = {
+                            if (!todo.completed && todo.complexity == TodoComplexity.Complex) {
+                                reviewingTodo = todo
+                            } else {
+                                onToggle(todo)
+                            }
+                        },
+                        onToggleSubtask = { subtaskId ->
+                            onUpdate(todo.toggleSubtask(subtaskId))
+                        },
                         onEdit = { editingTodo = todo },
                         onDelete = { onDelete(todo) },
                         onToggleSelected = {
@@ -346,6 +359,9 @@ internal fun TodoScreen(
                             selected = todo.id in selectedTodoIds,
                             selecting = selecting,
                             onToggle = { onToggle(todo) },
+                            onToggleSubtask = { subtaskId ->
+                                onUpdate(todo.toggleSubtask(subtaskId))
+                            },
                             onEdit = { editingTodo = todo },
                             onDelete = { onDelete(todo) },
                             onToggleSelected = {
@@ -373,6 +389,17 @@ internal fun TodoScreen(
                     onAdd(updatedTodo)
                 }
                 editingTodo = null
+            }
+        )
+    }
+
+    reviewingTodo?.let { todo ->
+        TodoCompletionReviewDialog(
+            todo = todo,
+            onDismiss = { reviewingTodo = null },
+            onSave = { review ->
+                onCompleteWithReview(todo, review)
+                reviewingTodo = null
             }
         )
     }
@@ -705,6 +732,9 @@ internal fun TodoEditorDialog(
     var draftTags by rememberSaveable(todo.id) { mutableStateOf(todo.tags) }
     var draftDueDate by rememberSaveable(todo.id) { mutableStateOf(todo.dueDate) }
     var draftReminderAt by rememberSaveable(todo.id) { mutableStateOf(todo.reminderAt) }
+    var draftComplexity by rememberSaveable(todo.id) { mutableStateOf(todo.complexity) }
+    var draftSubtasks by remember(todo.id) { mutableStateOf(todo.subtasks) }
+    var newSubtaskTitle by rememberSaveable(todo.id) { mutableStateOf("") }
     var plannedPomodorosText by rememberSaveable(todo.id) {
         mutableStateOf(todo.plannedPomodoros.coerceIn(1, 24).toString())
     }
@@ -719,14 +749,17 @@ internal fun TodoEditorDialog(
             TextButton(
                 enabled = title.isNotBlank(),
                 onClick = {
+                    val draftTodo = todo.copy(
+                        title = title.trim(),
+                        tags = draftTags,
+                        dueDate = draftDueDate,
+                        plannedPomodoros = plannedPomodoros,
+                        reminderAt = draftReminderAt,
+                        complexity = draftComplexity,
+                        subtasks = draftSubtasks.filter { it.title.isNotBlank() }
+                    )
                     onSave(
-                        todo.copy(
-                            title = title.trim(),
-                            tags = draftTags,
-                            dueDate = draftDueDate,
-                            plannedPomodoros = plannedPomodoros,
-                            reminderAt = draftReminderAt
-                        )
+                        draftTodo.copy(summary = summarizeTodoWithSubtasks(draftTodo))
                     )
                 }
             ) {
@@ -773,6 +806,32 @@ internal fun TodoEditorDialog(
                         value = draftReminderAt?.let(::formatTime) ?: "不提醒",
                         onClick = { editingReminder = true }
                     )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("任务类型", fontWeight = FontWeight.SemiBold)
+                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                            SegmentedButton(
+                                selected = draftComplexity == TodoComplexity.Simple,
+                                onClick = { draftComplexity = TodoComplexity.Simple },
+                                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
+                            ) {
+                                Text("简单")
+                            }
+                            SegmentedButton(
+                                selected = draftComplexity == TodoComplexity.Complex,
+                                onClick = { draftComplexity = TodoComplexity.Complex },
+                                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
+                            ) {
+                                Text("复杂")
+                            }
+                        }
+                    }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -804,6 +863,71 @@ internal fun TodoEditorDialog(
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                         )
+                    }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text("子任务", fontWeight = FontWeight.SemiBold)
+                        draftSubtasks.forEach { subtask ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Checkbox(
+                                    checked = subtask.completed,
+                                    onCheckedChange = {
+                                        draftSubtasks = draftSubtasks.map {
+                                            if (it.id == subtask.id) it.copy(completed = !it.completed) else it
+                                        }
+                                    }
+                                )
+                                Text(
+                                    subtask.title,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    textDecoration = if (subtask.completed) TextDecoration.LineThrough else TextDecoration.None
+                                )
+                                IconButton(
+                                    onClick = {
+                                        draftSubtasks = draftSubtasks.filterNot { it.id == subtask.id }
+                                    }
+                                ) {
+                                    Icon(Icons.Outlined.Delete, contentDescription = "删除子任务")
+                                }
+                            }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = newSubtaskTitle,
+                                onValueChange = { newSubtaskTitle = it.take(80) },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("新的子任务") },
+                                singleLine = true
+                            )
+                            FilledIconButton(
+                                enabled = newSubtaskTitle.isNotBlank(),
+                                onClick = {
+                                    draftSubtasks = draftSubtasks + TodoSubtask(
+                                        id = newId(),
+                                        title = newSubtaskTitle.trim()
+                                    )
+                                    newSubtaskTitle = ""
+                                }
+                            ) {
+                                Icon(Icons.Outlined.Add, contentDescription = "添加子任务")
+                            }
+                        }
                     }
                 }
             }
@@ -853,8 +977,100 @@ internal fun TodoEditorDialog(
     }
 }
 
+@Composable
+internal fun TodoCompletionReviewDialog(
+    todo: TodoItem,
+    onDismiss: () -> Unit,
+    onSave: (TodoCompletionReview) -> Unit
+) {
+    var problems by rememberSaveable(todo.id) { mutableStateOf(todo.completionReview?.problems.orEmpty()) }
+    var solution by rememberSaveable(todo.id) { mutableStateOf(todo.completionReview?.solution.orEmpty()) }
+    var blockers by rememberSaveable(todo.id) { mutableStateOf(todo.completionReview?.blockers.orEmpty()) }
+    val hasAnyAnswer = problems.isNotBlank() || solution.isNotBlank() || blockers.isNotBlank()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(
+                enabled = hasAnyAnswer,
+                onClick = {
+                    onSave(
+                        TodoCompletionReview(
+                            problems = problems.trim(),
+                            solution = solution.trim(),
+                            blockers = blockers.trim()
+                        )
+                    )
+                }
+            ) {
+                Text("完成任务")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+        title = { Text("复杂任务复盘") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    todo.title,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                OutlinedTextField(
+                    value = problems,
+                    onValueChange = { problems = it.take(600) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("遇到什么问题") },
+                    minLines = 2
+                )
+                OutlinedTextField(
+                    value = solution,
+                    onValueChange = { solution = it.take(600) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("如何解决") },
+                    minLines = 2
+                )
+                OutlinedTextField(
+                    value = blockers,
+                    onValueChange = { blockers = it.take(600) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("没解决的卡点") },
+                    minLines = 2
+                )
+            }
+        }
+    )
+}
+
 internal fun Set<String>.toggle(itemId: String): Set<String> {
     return if (itemId in this) this - itemId else this + itemId
+}
+
+internal fun TodoItem.toggleSubtask(subtaskId: String): TodoItem {
+    val updatedSubtasks = subtasks.map { subtask ->
+        if (subtask.id == subtaskId) subtask.copy(completed = !subtask.completed) else subtask
+    }
+    return copy(
+        subtasks = updatedSubtasks,
+        summary = summarizeTodoWithSubtasks(copy(subtasks = updatedSubtasks))
+    )
+}
+
+internal fun summarizeTodoWithSubtasks(todo: TodoItem): String {
+    if (todo.subtasks.isEmpty()) return todo.summary
+    val completedCount = todo.subtasks.count { it.completed }
+    val openSubtasks = todo.subtasks.filterNot { it.completed }.take(3)
+    val progressText = "$completedCount/${todo.subtasks.size} 个子任务完成"
+    val nextText = if (openSubtasks.isEmpty()) {
+        "所有子任务已完成，可以进入最终复盘。"
+    } else {
+        "下一步：${openSubtasks.joinToString("、") { it.title }}。"
+    }
+    return "$progressText。$nextText"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

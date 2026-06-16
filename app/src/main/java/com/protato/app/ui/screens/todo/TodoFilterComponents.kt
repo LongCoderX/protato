@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -44,28 +45,46 @@ fun TodoFilterControls(
     onOpenTagFilter: () -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
+        Surface(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
+            color = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(8.dp),
+            tonalElevation = 1.dp
         ) {
-            OutlinedButton(onClick = onOpenTagFilter, modifier = Modifier.weight(1f)) {
-                Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    selectedTag?.let { "#$it" } ?: "全部标签",
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            IconButton(onClick = onOpenDatePicker) {
-                Icon(Icons.Outlined.DateRange, contentDescription = "选择日期")
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedButton(
+                    onClick = onOpenTagFilter,
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Icon(Icons.AutoMirrored.Outlined.Label, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        selectedTag?.let { "#$it" } ?: "全部标签",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                IconButton(onClick = onOpenDatePicker) {
+                    Icon(Icons.Outlined.DateRange, contentDescription = "选择日期")
+                }
             }
         }
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
+            item {
+                FilterChip(
+                    selected = selectedDate == null,
+                    onClick = { onDateSelected(null) },
+                    label = { Text("收集箱 · $undatedCount") }
+                )
+            }
             items(dateKeys, key = { it }) { key ->
                 FilterChip(
                     selected = selectedDate == key,
@@ -77,13 +96,6 @@ fun TodoFilterControls(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
-                )
-            }
-            item {
-                FilterChip(
-                    selected = selectedDate == null,
-                    onClick = { onDateSelected(null) },
-                    label = { Text("无日期 · $undatedCount") }
                 )
             }
         }

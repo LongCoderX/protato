@@ -1,24 +1,91 @@
 package com.protato.app.ui
 
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 @Composable
 fun ProtatoTheme(fontScale: Float, content: @Composable () -> Unit) {
     val colors = lightColorScheme(
-        primary = Color(0xFFE94F37),
+        primary = Color(0xFF0D9488),
         onPrimary = Color.White,
-        secondary = Color(0xFF2F9E44),
-        tertiary = Color(0xFF456990),
-        background = Color(0xFFFAFAF8),
+        primaryContainer = Color(0xFFCCFBF1),
+        onPrimaryContainer = Color(0xFF134E4A),
+        secondary = Color(0xFFF97316),
+        onSecondary = Color.White,
+        secondaryContainer = Color(0xFFFFEDD5),
+        onSecondaryContainer = Color(0xFF7C2D12),
+        tertiary = Color(0xFF334155),
+        onTertiary = Color.White,
+        tertiaryContainer = Color(0xFFE2E8F0),
+        onTertiaryContainer = Color(0xFF0F172A),
+        background = Color(0xFFF7FBF8),
+        onBackground = Color(0xFF10201E),
         surface = Color(0xFFFFFFFF),
-        surfaceVariant = Color(0xFFF0EEE9),
-        outline = Color(0xFFD1CCC1)
+        onSurface = Color(0xFF10201E),
+        surfaceVariant = Color(0xFFE6F0EC),
+        onSurfaceVariant = Color(0xFF53615E),
+        outline = Color(0xFFB8C8C1),
+        outlineVariant = Color(0xFFD8E4DF),
+        error = Color(0xFFB42318),
+        errorContainer = Color(0xFFFEE4E2),
+        onErrorContainer = Color(0xFF7A271A)
+    )
+    val typography = Typography(
+        displayMedium = TextStyle(
+            fontFamily = FontFamily.SansSerif,
+            fontWeight = FontWeight.Bold,
+            fontSize = 48.sp,
+            lineHeight = 54.sp
+        ),
+        headlineMedium = TextStyle(
+            fontFamily = FontFamily.Serif,
+            fontWeight = FontWeight.Bold,
+            fontSize = 29.sp,
+            lineHeight = 36.sp
+        ),
+        titleLarge = TextStyle(
+            fontFamily = FontFamily.SansSerif,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 20.sp,
+            lineHeight = 28.sp
+        ),
+        titleMedium = TextStyle(
+            fontFamily = FontFamily.SansSerif,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 16.sp,
+            lineHeight = 24.sp
+        ),
+        bodyMedium = TextStyle(
+            fontFamily = FontFamily.SansSerif,
+            fontWeight = FontWeight.Normal,
+            fontSize = 15.sp,
+            lineHeight = 22.sp
+        ),
+        labelMedium = TextStyle(
+            fontFamily = FontFamily.SansSerif,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 12.sp,
+            lineHeight = 16.sp
+        )
+    )
+    val shapes = Shapes(
+        extraSmall = androidx.compose.foundation.shape.RoundedCornerShape(4.dp),
+        small = androidx.compose.foundation.shape.RoundedCornerShape(6.dp),
+        medium = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+        large = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
+        extraLarge = androidx.compose.foundation.shape.RoundedCornerShape(8.dp)
     )
     val density = LocalDensity.current
     CompositionLocalProvider(
@@ -26,7 +93,8 @@ fun ProtatoTheme(fontScale: Float, content: @Composable () -> Unit) {
     ) {
         MaterialTheme(
             colorScheme = colors,
-            typography = MaterialTheme.typography,
+            typography = typography,
+            shapes = shapes,
             content = content
         )
     }

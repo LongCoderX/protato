@@ -67,6 +67,7 @@ import androidx.compose.material.icons.outlined.WorkHistory
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DatePicker
@@ -124,6 +125,7 @@ import androidx.core.content.ContextCompat.startForegroundService
 import com.protato.app.ai.LlmChatMessage
 import com.protato.app.ai.fetchLlmModels
 import com.protato.app.ai.requestLlmChat
+import com.protato.app.domain.todo.sortedForAction
 import com.protato.app.ui.MainTab
 import com.protato.app.ui.ProtatoBottomBar
 import com.protato.app.ui.ProtatoTheme
@@ -227,16 +229,11 @@ internal fun FocusScreen(
                 todos = appState.todos,
                 selectedTodoId = selectedTodoId,
                 selectedTodoTitle = selectedTodo?.title,
-                templates = appState.templates,
-                selectedTemplate = selectedTemplate,
                 onModeChange = onModeChange,
                 onDurationChange = { minutes ->
                     onEvent(ProtatoEvent.UpdateTimerDuration(timerMode, minutes))
                 },
                 onSelectedTodo = onSelectedTodo,
-                onSelectedTemplate = { templateId ->
-                    onEvent(ProtatoEvent.SelectTemplate(templateId))
-                },
                 onStartPause = onStartPause,
                 onReset = onReset
             )
@@ -251,10 +248,11 @@ internal fun FocusScreen(
                 providers = providers,
                 agents = agents,
                 nickname = nickname,
+                todos = appState.todos,
                 recordPolishProviderId = appState.recordPolishProviderId,
                 onDismiss = onDismissRecord,
-                onSave = { answers ->
-                    onSaveRecord(record, answers)
+                onSave = { updatedRecord, answers ->
+                    onSaveRecord(updatedRecord, answers)
                 }
             )
         }
@@ -273,44 +271,75 @@ internal fun TimerCard(
     todos: List<TodoItem>,
     selectedTodoId: String?,
     selectedTodoTitle: String?,
-    templates: List<RecordTemplate>,
-    selectedTemplate: RecordTemplate,
     onModeChange: (TimerMode) -> Unit,
     onDurationChange: (Int) -> Unit,
     onSelectedTodo: (String?) -> Unit,
-    onSelectedTemplate: (String) -> Unit,
     onStartPause: () -> Unit,
     onReset: () -> Unit
 ) {
     var editingDuration by rememberSaveable { mutableStateOf(false) }
     var choosingTodo by rememberSaveable { mutableStateOf(false) }
-    var choosingTemplate by rememberSaveable { mutableStateOf(false) }
     val durationMinutes = totalSeconds / 60
     val showFocusControls = mode == TimerMode.Focus
+    val statusLabel = when {
+        isRunning -> "正在计时"
+        hasPausedSession -> "已暂停"
+        else -> "准备开始"
+    }
 
     ElevatedCard(
         modifier = modifier,
         shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 0.dp)
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(20.dp)
+                .background(MaterialTheme.colorScheme.surface)
+                .padding(18.dp)
         ) {
             Column(
                 modifier = Modifier.fillMaxSize(),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(18.dp)
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            statusLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            mode.label(),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    AssistChip(
+                        onClick = { editingDuration = true },
+                        label = { Text("${durationMinutes} 分钟") },
+                        leadingIcon = {
+                            Icon(Icons.Outlined.Timer, contentDescription = null)
+                        },
+                        enabled = !isRunning
+                    )
+                }
+
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 46.dp),
+                        .padding(horizontal = 8.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     val timerModes = listOf(TimerMode.Focus, TimerMode.Break)
-                    SingleChoiceSegmentedButtonRow {
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                         timerModes.forEachIndexed { index, item ->
                             SegmentedButton(
                                 selected = mode == item,
@@ -332,31 +361,21 @@ internal fun TimerCard(
                         modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
-                        val ringSize = minOf(minOf(maxWidth, maxHeight), 380.dp)
+                        val ringSize = minOf(minOf(maxWidth, maxHeight), 360.dp)
                         Box(contentAlignment = Alignment.Center, modifier = Modifier.size(ringSize)) {
                             TimerRing(progress = remainingSeconds / totalSeconds.toFloat().coerceAtLeast(1f))
                             Column(
-                                modifier = Modifier.padding(horizontal = 28.dp),
+                                modifier = Modifier.padding(horizontal = 30.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 if (showFocusControls) {
-                                    TextButton(
-                                        onClick = { choosingTemplate = true },
-                                        modifier = Modifier.widthIn(max = ringSize * 0.78f)
-                                    ) {
-                                        Icon(
-                                            Icons.AutoMirrored.Outlined.ViewList,
-                                            contentDescription = null,
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-                                        )
-                                        Spacer(Modifier.width(6.dp))
-                                        Text(
-                                            text = "模板：${selectedTemplate.name}",
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
+                                    Text(
+                                        text = "本轮任务",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 } else {
                                     Text(
                                         text = "休息",
@@ -374,15 +393,31 @@ internal fun TimerCard(
                                     }
                                 )
                                 if (showFocusControls) {
+                                    Surface(
+                                        modifier = Modifier
+                                            .widthIn(max = ringSize * 0.78f)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable(enabled = !isRunning) {
+                                                choosingTodo = true
+                                            },
+                                        color = MaterialTheme.colorScheme.surfaceVariant
+                                    ) {
+                                        Text(
+                                            text = selectedTodoTitle ?: "选择一个待办开始",
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                            textAlign = TextAlign.Center
+                                        )
+                                    }
+                                } else {
                                     Text(
-                                        text = selectedTodoTitle ?: "选择一个待办开始",
+                                        text = "起身、喝水、离开屏幕一会儿",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.clickable(enabled = !isRunning) {
-                                            choosingTodo = true
-                                        },
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
+                                        textAlign = TextAlign.Center
                                     )
                                 }
                             }
@@ -392,10 +427,23 @@ internal fun TimerCard(
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.Center,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Button(onClick = onStartPause) {
+                    Button(
+                        onClick = onStartPause,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(52.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isRunning) {
+                                MaterialTheme.colorScheme.secondary
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            }
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
                         Icon(
                             if (isRunning) Icons.Outlined.Stop else Icons.Outlined.PlayArrow,
                             contentDescription = null
@@ -406,11 +454,15 @@ internal fun TimerCard(
                                 isRunning -> "暂停"
                                 hasPausedSession -> "继续"
                                 else -> "开始"
-                            }
+                            },
+                            fontWeight = FontWeight.Bold
                         )
                     }
-                    Spacer(Modifier.width(12.dp))
-                    OutlinedButton(onClick = onReset) {
+                    OutlinedButton(
+                        onClick = onReset,
+                        modifier = Modifier.height(52.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
                         Icon(Icons.Outlined.RestartAlt, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text("重置")
@@ -437,7 +489,9 @@ internal fun TimerCard(
     if (choosingTodo && showFocusControls) {
         val todayKey = dayKey(System.currentTimeMillis())
         TodoSelectDialog(
-            todos = todos.filter { !it.completed && it.dueDate == todayKey },
+            todos = todos
+                .filter { !it.completed && (it.dueDate == null || it.dueDate == todayKey) }
+                .sortedForAction(todayKey),
             selectedTodoId = selectedTodoId,
             onDismiss = { choosingTodo = false },
             onSelected = { todoId ->
@@ -447,17 +501,6 @@ internal fun TimerCard(
         )
     }
 
-    if (choosingTemplate && showFocusControls) {
-        TemplateSelectDialog(
-            templates = templates,
-            selectedTemplateId = selectedTemplate.id,
-            onDismiss = { choosingTemplate = false },
-            onSelected = { templateId ->
-                onSelectedTemplate(templateId)
-                choosingTemplate = false
-            }
-        )
-    }
 }
 
 @Composable
@@ -505,45 +548,6 @@ internal fun TodoSelectDialog(
                             modifier = Modifier.fillMaxWidth()
                         )
                     }
-                }
-            }
-        }
-    )
-}
-
-@Composable
-internal fun TemplateSelectDialog(
-    templates: List<RecordTemplate>,
-    selectedTemplateId: String,
-    onDismiss: () -> Unit,
-    onSelected: (String) -> Unit
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text("关闭")
-            }
-        },
-        title = { Text("选择记录模板") },
-        text = {
-            LazyColumn(
-                modifier = Modifier.heightIn(max = 320.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(templates, key = { it.id }) { template ->
-                    FilterChip(
-                        selected = selectedTemplateId == template.id,
-                        onClick = { onSelected(template.id) },
-                        label = {
-                            Text(
-                                "${template.name} · ${template.fields.size} 个字段",
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
                 }
             }
         }

@@ -14,7 +14,7 @@ Protato 已经具备待办、番茄计时、复盘记录、AI 对话、模型配
 
 ## Current Snapshot
 
-更新时间：2026-06-12
+更新时间：2026-06-13
 
 ### Completed
 
@@ -72,6 +72,13 @@ Protato 已经具备待办、番茄计时、复盘记录、AI 对话、模型配
 - 已拆出一批 Compose 子组件到 `ui/components/` 和 `ui/screens/...`。
 - `TodoFilterControls` 和 `TodoTagFilterDialog` 已从 `TodoScreen.kt` 拆到 `ui/screens/todo/TodoFilterComponents.kt`。
 - `Icons.Outlined.Label` deprecation warning 已清理。
+- 已开始在重构后的 `ProtatoEvent -> reducer -> AppState` 边界上添加新功能：任务支持 `Simple` / `Complex` 类型，复杂任务完成时需要填写“遇到什么问题 / 如何解决 / 没解决的卡点”复盘。
+- `AppStateJsonCodec` 和 WebDAV 同步导出已支持任务复杂度和完成复盘字段。
+- 已新增 `domain/todo/TodoOrdering.kt`，统一无日期任务、今日任务和其他日期任务的行动顺序。
+- 待办列表默认优先展示无日期任务，日期筛选中“无日期”移到第一个；专注页任务选择和记录编辑绑定任务时也会先显示无日期任务，再显示当天任务。
+- 空态组件已从固定 160dp 高度改为内容自适应，避免任务/记录为空时灰色区域显得占满容器。
+- Agent turn 已增加确定性意图拦截：查询今天任务或已完成/未完成内容时只返回列表，不生成新增确认卡；“把未完成任务挪到今天”会生成待确认的编辑草案。
+- `AgentIntentResolverTest`、`AgentTurnServiceTest`、`ProtatoStateHolderTest` 和 `AppStateJsonCodecTest` 已覆盖本次任务复杂度、复盘保存、查询不触发确认卡、未完成任务改到今天等行为。
 
 ### Verified
 

@@ -7,6 +7,7 @@ import com.protato.app.TodoDraft
 import com.protato.app.TodoEditDraft
 import com.protato.app.filterNewTodoDrafts
 import com.protato.app.filterNewTodoEdits
+import com.protato.app.util.dayKey
 
 internal data class AgentTurnResult(
     val reply: String,
@@ -22,10 +23,58 @@ internal suspend fun runAgentTurn(
     provider: LlmProviderSettings?,
     nickname: String,
     handledTodoDraftKeys: Set<String>,
-    handledTodoEditKeys: Set<String>
+    handledTodoEditKeys: Set<String>,
+    hasPendingActions: Boolean = false
 ): AgentTurnResult {
+    val intent = AgentIntentResolver().resolve(
+        AgentIntentRequest(
+            userText = text,
+            recentMessages = userState.agentMessages.takeLast(8),
+            hasPendingActions = hasPendingActions
+        )
+    ).intent
+    when (intent) {
+        is AgentIntent.QueryTodos -> {
+            return AgentTurnResult(reply = localTodoQueryReply(text, userState, nickname))
+        }
+
+        is AgentIntent.MoveOpenTodosToToday -> {
+            val today = dayKey(System.currentTimeMillis())
+            val edits = userState.todos
+                .filter { !it.completed && it.dueDate != today }
+                .take(6)
+                .map { todo -> TodoEditDraft(id = todo.id, dueDate = today) }
+                .filterNewTodoEdits(
+                    existingTodos = userState.todos,
+                    handledKeys = handledTodoEditKeys
+                )
+            return AgentTurnResult(
+                reply = if (edits.isEmpty()) {
+                    "未完成任务已经在今天，或没有需要调整日期的任务。"
+                } else {
+                    "我整理了 ${edits.size} 个未完成任务的日期调整草案，请确认是否改到今天。"
+                },
+                todoEdits = edits
+            )
+        }
+
+        is AgentIntent.AskClarification -> {
+            return AgentTurnResult(reply = intent.question)
+        }
+
+        is AgentIntent.ConfirmPendingAction -> {
+            return AgentTurnResult(reply = "请直接点击下方确认按钮应用这次草案。")
+        }
+
+        is AgentIntent.RejectPendingAction -> {
+            return AgentTurnResult(reply = "请直接点击下方取消按钮放弃这次草案。")
+        }
+
+        else -> Unit
+    }
     val todoDrafts = createTodoDraftsForTurn(
         text = text,
+        shouldCreate = intent is AgentIntent.PlanTodos,
         userState = userState,
         agent = agent,
         provider = provider,
@@ -48,21 +97,31 @@ internal suspend fun runAgentTurn(
         localUnifiedAgentReply(text, userState, nickname)
     }
     val toolResponse = parseAgentToolResponse(rawReply)
-    val finalTodoDrafts = toolResponse.todoDrafts
+    val parsedTodoDrafts = if (intent is AgentIntent.PlanTodos) {
+        toolResponse.todoDrafts
+    } else {
+        emptyList()
+    }
+    val parsedTodoEdits = if (intent is AgentIntent.UpdateTodo) {
+        toolResponse.todoEdits
+    } else {
+        emptyList()
+    }
+    val finalTodoDrafts = parsedTodoDrafts
         .ifEmpty { todoDrafts }
         .filterNewTodoDrafts(
             existingTodos = userState.todos,
             handledKeys = handledTodoDraftKeys
         )
-    val finalTodoEdits = toolResponse.todoEdits.filterNewTodoEdits(
+    val finalTodoEdits = parsedTodoEdits.filterNewTodoEdits(
         existingTodos = userState.todos,
         handledKeys = handledTodoEditKeys
     )
     val reply = if (
         (
-            toolResponse.todoDrafts.isNotEmpty() ||
+            parsedTodoDrafts.isNotEmpty() ||
                 todoDrafts.isNotEmpty() ||
-                toolResponse.todoEdits.isNotEmpty()
+                parsedTodoEdits.isNotEmpty()
             ) &&
         finalTodoDrafts.isEmpty() &&
         finalTodoEdits.isEmpty()
@@ -81,12 +140,13 @@ internal suspend fun runAgentTurn(
 
 private suspend fun createTodoDraftsForTurn(
     text: String,
+    shouldCreate: Boolean,
     userState: AppState,
     agent: AgentSettings?,
     provider: LlmProviderSettings?,
     nickname: String
 ): List<TodoDraft> {
-    if (!text.looksLikeTodoPlanningRequest()) return emptyList()
+    if (!shouldCreate) return emptyList()
     return runCatching {
         if (agent != null && provider != null && provider.isConfiguredForChat()) {
             generateAgentTodoDrafts(

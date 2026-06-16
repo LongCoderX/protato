@@ -125,6 +125,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.protato.app.ai.LlmChatMessage
+import com.protato.app.ai.AgentSessionState
 import com.protato.app.ai.fetchLlmModels
 import com.protato.app.ai.requestLlmChat
 import com.protato.app.ui.MainTab
@@ -197,6 +198,10 @@ fun ProtatoApp() {
     var timerMode by rememberSaveable { mutableStateOf(TimerMode.Focus) }
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var syncing by rememberSaveable { mutableStateOf(false) }
+    var agentInput by rememberSaveable { mutableStateOf("") }
+    var agentLoading by rememberSaveable { mutableStateOf(false) }
+    var agentErrorText by rememberSaveable { mutableStateOf<String?>(null) }
+    var agentSessionState by remember { mutableStateOf(AgentSessionState()) }
 
     val todayKey = dayKey(System.currentTimeMillis())
     val selectedTodo = appState.todos.firstOrNull {
@@ -340,6 +345,15 @@ fun ProtatoApp() {
                     when (currentTab) {
                         MainTab.Agent -> AgentScreen(
                             appState = appState,
+                            input = agentInput,
+                            loading = agentLoading,
+                            errorText = agentErrorText,
+                            sessionState = agentSessionState,
+                            turnScope = scope,
+                            onInputChange = { agentInput = it },
+                            onLoadingChange = { agentLoading = it },
+                            onErrorTextChange = { agentErrorText = it },
+                            onSessionStateChange = { agentSessionState = it },
                             onEvent = ::dispatchEvent
                         )
 
@@ -428,6 +442,9 @@ fun ProtatoApp() {
                             onToggle = { item ->
                                 dispatchEvent(ProtatoEvent.ToggleTodo(item))
                             },
+                            onCompleteWithReview = { item, review ->
+                                dispatchEvent(ProtatoEvent.CompleteTodoWithReview(item, review))
+                            },
                             onDelete = { item ->
                                 dispatchEvent(ProtatoEvent.DeleteTodo(item))
                             },
@@ -459,7 +476,6 @@ fun ProtatoApp() {
                         )
 
                         MainTab.More -> MoreScreen(
-                            onOpenTemplates = { secondaryDestination = SecondaryDestination.Templates },
                             onOpenSettings = { secondaryDestination = SecondaryDestination.Settings }
                         )
                     }

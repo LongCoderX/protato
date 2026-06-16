@@ -172,6 +172,24 @@ internal fun AppState.toWebDevSyncJson(): JSONObject {
                 .put("tags", todo.tags.toJsonArrayForSync { it })
                 .put("dueDate", todo.dueDate ?: "")
                 .put("plannedPomodoros", todo.plannedPomodoros)
+                .put("complexity", todo.complexity.name)
+                .put("summary", todo.summary)
+                .put("subtasks", todo.subtasks.toJsonArrayForSync { subtask ->
+                    JSONObject()
+                        .put("id", subtask.id)
+                        .put("title", subtask.title)
+                        .put("completed", subtask.completed)
+                })
+                .put(
+                    "completionReview",
+                    todo.completionReview?.let { review ->
+                        JSONObject()
+                            .put("problems", review.problems)
+                            .put("solution", review.solution)
+                            .put("blockers", review.blockers)
+                            .put("completedAt", review.completedAt)
+                    } ?: JSONObject.NULL
+                )
         })
         .put("records", records.toJsonArrayForSync { record ->
             JSONObject()

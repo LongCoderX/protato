@@ -5,17 +5,21 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
@@ -66,6 +70,7 @@ fun TodoSectionHeader(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .padding(top = 2.dp)
             .clickable(onClick = onToggle),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -74,7 +79,12 @@ fun TodoSectionHeader(
             modifier = Modifier.width(44.dp),
             color = MaterialTheme.colorScheme.outline.copy(alpha = 0.55f)
         )
-        Text("$title · $count", fontWeight = FontWeight.SemiBold)
+        Text(
+            "$title · $count",
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelMedium
+        )
         Icon(
             if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
             contentDescription = null,
@@ -137,7 +147,7 @@ fun TodoSelectionBar(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(MaterialTheme.colorScheme.secondaryContainer)
             .padding(horizontal = 6.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -216,17 +226,49 @@ fun TodoMetadataStrip(
 @Composable
 fun TodoExpandedDetails(
     todo: TodoItem,
+    onToggleSubtask: (String) -> Unit,
     tagColor: (String) -> Color
 ) {
-    if (todo.tags.isEmpty()) return
+    if (todo.tags.isEmpty() && todo.subtasks.isEmpty() && todo.summary.isBlank()) return
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        LazyRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            items(todo.tags, key = { it }) { tag ->
-                TodoTagChip(tag, tagColor(tag))
+        if (todo.summary.isNotBlank()) {
+            Text(
+                todo.summary,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+        if (todo.subtasks.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                todo.subtasks.forEach { subtask ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Checkbox(
+                            checked = subtask.completed,
+                            onCheckedChange = { onToggleSubtask(subtask.id) }
+                        )
+                        Text(
+                            subtask.title,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textDecoration = if (subtask.completed) TextDecoration.LineThrough else TextDecoration.None,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+        if (todo.tags.isNotEmpty()) {
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                items(todo.tags, key = { it }) { tag ->
+                    TodoTagChip(tag, tagColor(tag))
+                }
             }
         }
     }
@@ -239,6 +281,7 @@ fun TodoRow(
     selected: Boolean,
     selecting: Boolean,
     onToggle: () -> Unit,
+    onToggleSubtask: (String) -> Unit,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onToggleSelected: () -> Unit,
@@ -282,28 +325,33 @@ fun TodoRow(
                 ),
             colors = CardDefaults.elevatedCardColors(
                 containerColor = if (selected) {
-                    MaterialTheme.colorScheme.secondaryContainer
+                    MaterialTheme.colorScheme.primaryContainer
                 } else {
                     MaterialTheme.colorScheme.surface
                 }
-            )
+            ),
+            elevation = CardDefaults.elevatedCardElevation(defaultElevation = 0.dp)
         ) {
             Row(
-                modifier = Modifier.padding(12.dp),
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Checkbox(
+                TodoCheckControl(
                     checked = if (selecting) selected else todo.completed,
-                    onCheckedChange = {
+                    selectedMode = selecting,
+                    onClick = {
                         if (selecting) onToggleSelected() else onToggle()
                     }
                 )
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
                 ) {
                     Text(
                         text = todo.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
                         textDecoration = if (todo.completed) {
                             TextDecoration.LineThrough
                         } else {
@@ -317,6 +365,15 @@ fun TodoRow(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
+                    if (todo.summary.isNotBlank() && !expanded) {
+                        Text(
+                            text = todo.summary,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                     TodoMetadataStrip(
                         todo = todo,
                         dayLabel = ::formatDayLabel,
@@ -327,11 +384,45 @@ fun TodoRow(
                     if (expanded) {
                         TodoExpandedDetails(
                             todo = todo,
+                            onToggleSubtask = onToggleSubtask,
                             tagColor = ::todoTagColor
                         )
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun TodoCheckControl(
+    checked: Boolean,
+    selectedMode: Boolean,
+    onClick: () -> Unit
+) {
+    val background = when {
+        checked && selectedMode -> MaterialTheme.colorScheme.secondary
+        checked -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val iconColor = if (checked) {
+        MaterialTheme.colorScheme.onPrimary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Box(
+        modifier = Modifier
+            .size(34.dp)
+            .clip(CircleShape)
+            .background(background)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(
+            Icons.Outlined.Check,
+            contentDescription = null,
+            tint = iconColor,
+            modifier = Modifier.size(19.dp)
+        )
     }
 }

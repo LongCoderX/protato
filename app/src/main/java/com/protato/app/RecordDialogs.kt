@@ -125,6 +125,7 @@ import androidx.core.content.ContextCompat.startForegroundService
 import com.protato.app.ai.LlmChatMessage
 import com.protato.app.ai.fetchLlmModels
 import com.protato.app.ai.requestLlmChat
+import com.protato.app.domain.todo.sortedForAction
 import com.protato.app.ui.MainTab
 import com.protato.app.ui.ProtatoBottomBar
 import com.protato.app.ui.ProtatoTheme
@@ -344,13 +345,31 @@ internal fun RecordDialog(
     providers: List<LlmProviderSettings>,
     agents: List<AgentSettings>,
     nickname: String,
+    todos: List<TodoItem>,
     recordPolishProviderId: String,
     onDismiss: () -> Unit,
-    onSave: (List<FieldAnswer>) -> Unit
+    onSave: (PendingRecord, List<FieldAnswer>) -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val answers = remember(template.id) { mutableStateMapOf<String, String>() }
     val missingRequired = hasMissingRequiredAnswers(template, answers)
+    val recordDayKey = dayKey(pendingRecord.endedAt)
+    val recordDayTodos = remember(todos, recordDayKey) {
+        todos
+            .filter { it.dueDate == recordDayKey }
+            .sortedForAction(recordDayKey)
+    }
+    val suggestedTodoId = remember(pendingRecord.todoId, pendingRecord.todoTitle, recordDayTodos) {
+        pendingRecord.todoId ?: suggestRecordTodoId(
+            pendingRecord = pendingRecord,
+            answers = emptyList(),
+            todos = recordDayTodos
+        )
+    }
+    var selectedTodoId by rememberSaveable(pendingRecord.startedAt) {
+        mutableStateOf(suggestedTodoId)
+    }
+    val selectedTodo = recordDayTodos.firstOrNull { it.id == selectedTodoId }
     var encouragement by remember(pendingRecord.startedAt) {
         mutableStateOf(localEncouragement(pendingRecord, nickname))
     }
@@ -391,7 +410,19 @@ internal fun RecordDialog(
             TextButton(
                 enabled = !missingRequired,
                 onClick = {
-                    onSave(template.fields.map { FieldAnswer(it.id, answers[it.id].orEmpty().trim()) })
+                    val finalAnswers = template.fields.map {
+                        FieldAnswer(it.id, answers[it.id].orEmpty().trim())
+                    }
+                    val finalTodo = selectedTodo ?: recordDayTodos.firstOrNull {
+                        it.id == suggestRecordTodoId(pendingRecord, finalAnswers, recordDayTodos)
+                    }
+                    onSave(
+                        pendingRecord.copy(
+                            todoId = finalTodo?.id ?: pendingRecord.todoId,
+                            todoTitle = finalTodo?.title ?: pendingRecord.todoTitle
+                        ),
+                        finalAnswers
+                    )
                 }
             ) {
                 Text("保存记录")
@@ -411,15 +442,29 @@ internal fun RecordDialog(
                     "${pendingRecord.todoTitle} · ${pendingRecord.focusMinutes} 分钟",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (pendingRecord.todoId == null) {
+                    RecordTodoSelector(
+                        todos = recordDayTodos,
+                        selectedTodoId = selectedTodoId,
+                        fallbackTodoTitle = null,
+                        dayLabel = formatDayLabel(recordDayKey),
+                        tagColor = ::todoTagColor,
+                        onSelected = { selectedTodoId = it }
+                    )
+                }
                 Surface(
                     color = MaterialTheme.colorScheme.primaryContainer,
                     contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                     shape = RoundedCornerShape(8.dp)
                 ) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("AI 鼓励", fontWeight = FontWeight.SemiBold)
+                        Text("AI 复盘提醒", fontWeight = FontWeight.SemiBold)
                         Text(
                             if (loadingEncouragement) "正在认真组织一句足够贴心的话..." else encouragement
+                        )
+                        Text(
+                            "可以按三点写：完成了什么、遇到什么阻力、下一步最小动作是什么。",
+                            style = MaterialTheme.typography.bodySmall
                         )
                     }
                 }
@@ -480,6 +525,61 @@ internal fun RecordDialog(
     }
 }
 
+internal fun suggestRecordTodoId(
+    pendingRecord: PendingRecord,
+    answers: List<FieldAnswer>,
+    todos: List<TodoItem>
+): String? {
+    if (todos.isEmpty()) return null
+    val source = buildString {
+        append(pendingRecord.todoTitle)
+        answers.forEach { answer ->
+            append(' ')
+            append(answer.value)
+        }
+    }
+    val tokens = source.recordMatchTokens()
+    if (tokens.isEmpty()) return null
+    return todos
+        .map { todo ->
+            val title = todo.title.lowercase(Locale.getDefault())
+            val tokenScore = tokens.count { token -> token in title || title in token }
+            val charScore = title.count { char -> char.toString() in source }
+            val score = tokenScore * 4 + charScore
+            todo to score
+        }
+        .filter { (_, score) -> score > 0 }
+        .sortedWith(
+            compareByDescending<Pair<TodoItem, Int>> { it.second }
+                .thenByDescending { it.first.createdAt }
+        )
+        .firstOrNull()
+        ?.first
+        ?.id
+}
+
+private fun String.recordMatchTokens(): List<String> {
+    return lowercase(Locale.getDefault())
+        .split(Regex("[\\s，,。；;：:、/\\\\|\\-_*（）()【】\\[\\]{}]+"))
+        .map { it.trim() }
+        .filter { it.length >= 2 && it !in recordMatchStopWords }
+        .distinct()
+        .take(12)
+}
+
+private val recordMatchStopWords = setOf(
+    "未绑定任务",
+    "完成",
+    "主要",
+    "任务",
+    "今天",
+    "问题",
+    "解决",
+    "卡点",
+    "没有",
+    "一下"
+)
+
 @Composable
 internal fun RecordEditDialog(
     record: PomodoroRecord,
@@ -509,7 +609,9 @@ internal fun RecordEditDialog(
     val originalTodoStillSelected = selectedTodoId == record.todoId && selectedTodoId != null
     val recordDayKey = dayKey(record.endedAt)
     val recordDayTodos = remember(todos, recordDayKey) {
-        todos.filter { it.dueDate == recordDayKey }
+        todos
+            .filter { it.dueDate == recordDayKey }
+            .sortedForAction(recordDayKey)
     }
     val selectedTodoShownInDayList = recordDayTodos.any { it.id == selectedTodoId }
     val updatedTodoTitle = when {

@@ -11,10 +11,13 @@ import com.protato.app.RecordTemplate
 import com.protato.app.PomodoroRecord
 import com.protato.app.TimerMode
 import com.protato.app.TimerSession
+import com.protato.app.TodoCompletionReview
+import com.protato.app.TodoComplexity
 import com.protato.app.TodoDraft
 import com.protato.app.TodoEditDraft
 import com.protato.app.TodoItem
 import com.protato.app.defaultTemplate
+import com.protato.app.util.dayKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -48,6 +51,68 @@ class ProtatoStateHolderTest {
             ),
             result.effects
         )
+    }
+
+    @Test
+    fun dispatchToggleInboxTodoBindsTodayBeforeCompletion() {
+        val todo = TodoItem(id = "todo-1", title = "收集箱任务", completed = false, dueDate = null)
+        val holder = testHolder(AppState(todos = listOf(todo)))
+
+        holder.dispatch(ProtatoEvent.ToggleTodo(todo))
+
+        assertEquals(true, holder.appState.todos.single().completed)
+        assertEquals(dayKey(System.currentTimeMillis()), holder.appState.todos.single().dueDate)
+    }
+
+    @Test
+    fun dispatchCompleteTodoWithReviewStoresReviewAndReturnsCompletionEffect() {
+        val todo = TodoItem(
+            id = "todo-1",
+            title = "复杂任务",
+            completed = false,
+            complexity = TodoComplexity.Complex
+        )
+        val review = TodoCompletionReview(
+            problems = "卡在边界",
+            solution = "拆出事件",
+            blockers = "还要补 UI",
+            completedAt = 1_000L
+        )
+        val holder = testHolder(AppState(todos = listOf(todo)))
+
+        val result = holder.dispatch(ProtatoEvent.CompleteTodoWithReview(todo, review))
+
+        assertEquals(true, holder.appState.todos.single().completed)
+        assertEquals(review, holder.appState.todos.single().completionReview)
+        assertEquals(dayKey(System.currentTimeMillis()), holder.appState.todos.single().dueDate)
+        assertEquals(
+            listOf(
+                ProtatoEffect.CancelTodoReminder("todo-1"),
+                ProtatoEffect.PlayTodoCompletedSound
+            ),
+            result.effects
+        )
+    }
+
+    @Test
+    fun dispatchToggleCompletedTodoClearsCompletionReviewWhenReopened() {
+        val todo = TodoItem(
+            id = "todo-1",
+            title = "复杂任务",
+            completed = true,
+            completionReview = TodoCompletionReview(
+                problems = "卡住",
+                solution = "解决",
+                blockers = "",
+                completedAt = 1_000L
+            )
+        )
+        val holder = testHolder(AppState(todos = listOf(todo)))
+
+        holder.dispatch(ProtatoEvent.ToggleTodo(todo))
+
+        assertEquals(false, holder.appState.todos.single().completed)
+        assertNull(holder.appState.todos.single().completionReview)
     }
 
     @Test

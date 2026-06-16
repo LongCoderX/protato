@@ -20,7 +20,29 @@ data class TodoItem(
     val tags: List<String> = emptyList(),
     val dueDate: String? = null,
     val plannedPomodoros: Int = 1,
-    val reminderAt: Long? = null
+    val reminderAt: Long? = null,
+    val complexity: TodoComplexity = TodoComplexity.Simple,
+    val completionReview: TodoCompletionReview? = null,
+    val subtasks: List<TodoSubtask> = emptyList(),
+    val summary: String = ""
+)
+
+data class TodoSubtask(
+    val id: String,
+    val title: String,
+    val completed: Boolean = false
+)
+
+enum class TodoComplexity {
+    Simple,
+    Complex
+}
+
+data class TodoCompletionReview(
+    val problems: String,
+    val solution: String,
+    val blockers: String,
+    val completedAt: Long = System.currentTimeMillis()
 )
 
 data class TemplateField(

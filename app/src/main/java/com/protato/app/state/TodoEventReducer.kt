@@ -1,6 +1,7 @@
 package com.protato.app.state
 
 import com.protato.app.AppState
+import com.protato.app.util.dayKey
 
 internal fun reduceTodoEvent(
     state: AppState,
@@ -23,10 +24,23 @@ internal fun reduceTodoEvent(
 
         is ProtatoEvent.ToggleTodo -> {
             val nextCompleted = !event.todo.completed
+            val today = dayKey(System.currentTimeMillis())
             StateReduction(
                 state = state.copy(
                     todos = state.todos.map { todo ->
-                        if (todo.id == event.todo.id) todo.copy(completed = nextCompleted) else todo
+                        if (todo.id == event.todo.id) {
+                            todo.copy(
+                                completed = nextCompleted,
+                                dueDate = if (nextCompleted) todo.dueDate ?: today else todo.dueDate,
+                                completionReview = if (nextCompleted) {
+                                    todo.completionReview
+                                } else {
+                                    null
+                                }
+                            )
+                        } else {
+                            todo
+                        }
                     }
                 ),
                 result = ProtatoEventResult(
@@ -38,6 +52,31 @@ internal fun reduceTodoEvent(
                     } else {
                         emptyList()
                     }
+                )
+            )
+        }
+
+        is ProtatoEvent.CompleteTodoWithReview -> {
+            val today = dayKey(System.currentTimeMillis())
+            StateReduction(
+                state = state.copy(
+                    todos = state.todos.map { todo ->
+                        if (todo.id == event.todo.id) {
+                            todo.copy(
+                                completed = true,
+                                dueDate = todo.dueDate ?: today,
+                                completionReview = event.review
+                            )
+                        } else {
+                            todo
+                        }
+                    }
+                ),
+                result = ProtatoEventResult(
+                    effects = listOf(
+                        ProtatoEffect.CancelTodoReminder(event.todo.id),
+                        ProtatoEffect.PlayTodoCompletedSound
+                    )
                 )
             )
         }
