@@ -52,9 +52,12 @@ import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.Flag
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Remove
 import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Settings
@@ -80,9 +83,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -106,7 +106,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -125,7 +124,6 @@ import com.protato.app.ui.components.ChatBubble
 import com.protato.app.ui.components.EmptyState
 import com.protato.app.ui.components.Header
 import com.protato.app.ui.components.SecondaryHeader
-import com.protato.app.ui.components.SettingActionRow
 import com.protato.app.ui.components.TodoDateChip
 import com.protato.app.ui.components.TodoPomodoroChip
 import com.protato.app.ui.components.TodoReminderChip
@@ -186,6 +184,7 @@ internal fun TodoScreen(
     onCompleteWithReview: (TodoItem, TodoCompletionReview) -> Unit,
     onDelete: (TodoItem) -> Unit,
     onUpdate: (TodoItem) -> Unit,
+    onMoveManyToToday: (Set<String>) -> Unit,
     onDeleteMany: (Set<String>) -> Unit,
     onAddMany: (List<TodoItem>) -> Unit
 ) {
@@ -200,6 +199,11 @@ internal fun TodoScreen(
     var showCompletedTodos by rememberSaveable { mutableStateOf(false) }
     val selecting = selectedTodoIds.isNotEmpty()
     val todayKey = dayKey(System.currentTimeMillis())
+    val canMoveSelectionToToday = selectedTodoIds.any { selectedId ->
+        todos.any { todo ->
+            todo.id == selectedId && !todo.completed && todo.dueDate != todayKey
+        }
+    }
     var selectedTodoDate by rememberSaveable { mutableStateOf<String?>(null) }
     val availableTags = remember(todos) {
         todos.flatMap { it.tags }
@@ -238,7 +242,13 @@ internal fun TodoScreen(
             if (selecting) {
                 TodoSelectionBar(
                     selectedCount = selectedTodoIds.size,
+                    canMoveToToday = canMoveSelectionToToday,
                     onCancel = { selectedTodoIds = emptySet() },
+                    onMoveToToday = {
+                        onMoveManyToToday(selectedTodoIds)
+                        selectedTodoIds = emptySet()
+                        selectedTodoDate = todayKey
+                    },
                     onDelete = {
                         onDeleteMany(selectedTodoIds)
                         selectedTodoIds = emptySet()
@@ -788,82 +798,44 @@ internal fun TodoEditorDialog(
                     modifier = Modifier.fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    SettingActionRow(
-                        icon = Icons.Outlined.DateRange,
-                        title = "日期",
-                        value = draftDueDate?.let(::formatDayLabel) ?: "未安排日期",
-                        onClick = { editingDate = true }
-                    )
-                    SettingActionRow(
-                        icon = Icons.AutoMirrored.Outlined.Label,
-                        title = "标签",
-                        value = if (draftTags.isEmpty()) "未添加标签" else draftTags.joinToString(" ") { "#$it" },
-                        onClick = { editingTags = true }
-                    )
-                    SettingActionRow(
-                        icon = Icons.Outlined.DateRange,
-                        title = "提醒",
-                        value = draftReminderAt?.let(::formatTime) ?: "不提醒",
-                        onClick = { editingReminder = true }
-                    )
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .padding(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Text("任务类型", fontWeight = FontWeight.SemiBold)
-                        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                            SegmentedButton(
-                                selected = draftComplexity == TodoComplexity.Simple,
-                                onClick = { draftComplexity = TodoComplexity.Simple },
-                                shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2)
-                            ) {
-                                Text("简单")
-                            }
-                            SegmentedButton(
-                                selected = draftComplexity == TodoComplexity.Complex,
-                                onClick = { draftComplexity = TodoComplexity.Complex },
-                                shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2)
-                            ) {
-                                Text("复杂")
-                            }
-                        }
-                    }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .padding(12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_tomato),
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        CompactTodoMetaAction(
+                            icon = Icons.Outlined.DateRange,
+                            value = draftDueDate?.let(::formatDayLabel) ?: "未安排",
+                            onClick = { editingDate = true },
+                            contentDescription = "设置日期",
+                            modifier = Modifier.fillMaxWidth()
                         )
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text("预计番茄", fontWeight = FontWeight.SemiBold)
-                            Text(
-                                "用于估算这条待办需要几轮专注",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                        OutlinedTextField(
-                            value = plannedPomodorosText,
-                            onValueChange = { value ->
-                                plannedPomodorosText = value.filter { it.isDigit() }.take(2)
+                        CompactTodoMetaAction(
+                            icon = Icons.AutoMirrored.Outlined.Label,
+                            value = if (draftTags.isEmpty()) "未添加" else draftTags.joinToString(" ") { "#$it" },
+                            onClick = { editingTags = true },
+                            contentDescription = "设置标签",
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        CompactTodoMetaAction(
+                            icon = Icons.Outlined.Notifications,
+                            value = draftReminderAt?.let(::formatTime) ?: "不提醒",
+                            onClick = { editingReminder = true },
+                            contentDescription = "设置提醒",
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        CompactPomodoroStepper(
+                            value = plannedPomodoros,
+                            onDecrease = {
+                                plannedPomodorosText = (plannedPomodoros - 1).coerceAtLeast(1).toString()
                             },
-                            modifier = Modifier.width(84.dp),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                            onIncrease = {
+                                plannedPomodorosText = (plannedPomodoros + 1).coerceAtMost(24).toString()
+                            },
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
+                    CompactComplexitySelector(
+                        selected = draftComplexity,
+                        onSelected = { draftComplexity = it },
+                        modifier = Modifier.fillMaxWidth()
+                    )
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -978,6 +950,186 @@ internal fun TodoEditorDialog(
 }
 
 @Composable
+private fun CompactTodoMetaAction(
+    icon: ImageVector,
+    value: String,
+    onClick: () -> Unit,
+    contentDescription: String,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            icon,
+            contentDescription = contentDescription,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp)
+        )
+        Text(
+            value,
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Icon(
+            Icons.Outlined.KeyboardArrowDown,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
+        )
+    }
+}
+
+@Composable
+private fun CompactPomodoroStepper(
+    value: Int,
+    onDecrease: () -> Unit,
+    onIncrease: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.ic_tomato),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp)
+        )
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(1.dp)
+        ) {
+            Text(
+                "番茄数量",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1
+            )
+            Text(
+                "$value 个番茄",
+                color = MaterialTheme.colorScheme.onSurface,
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1
+            )
+        }
+        IconButton(
+            enabled = value > 1,
+            onClick = onDecrease,
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(Icons.Outlined.Remove, contentDescription = "减少预计番茄")
+        }
+        IconButton(
+            enabled = value < 24,
+            onClick = onIncrease,
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(Icons.Outlined.Add, contentDescription = "增加预计番茄")
+        }
+    }
+}
+
+@Composable
+private fun CompactComplexitySelector(
+    selected: TodoComplexity,
+    onSelected: (TodoComplexity) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            Icons.Outlined.Flag,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp)
+        )
+        Text(
+            "任务类型",
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1
+        )
+        CompactComplexityOption(
+            label = "简单",
+            selected = selected == TodoComplexity.Simple,
+            onClick = { onSelected(TodoComplexity.Simple) }
+        )
+        CompactComplexityOption(
+            label = "复杂",
+            selected = selected == TodoComplexity.Complex,
+            onClick = { onSelected(TodoComplexity.Complex) }
+        )
+    }
+}
+
+@Composable
+private fun CompactComplexityOption(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val background = if (selected) {
+        MaterialTheme.colorScheme.primaryContainer
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+    val contentColor = if (selected) {
+        MaterialTheme.colorScheme.onPrimaryContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(background)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        if (selected) {
+            Icon(
+                Icons.Outlined.Check,
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.size(16.dp)
+            )
+        }
+        Text(
+            text = label,
+            color = contentColor,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
 internal fun TodoCompletionReviewDialog(
     todo: TodoItem,
     onDismiss: () -> Unit,
@@ -1083,24 +1235,22 @@ internal fun TodoReminderEditDialog(
 ) {
     val initialMillis = initialReminderAt ?: System.currentTimeMillis()
     val state = rememberDatePickerState(initialSelectedDateMillis = initialMillis)
-    var hourText by rememberSaveable(initialReminderAt) {
-        mutableStateOf(SimpleDateFormat("HH", Locale.getDefault()).format(Date(initialMillis)))
+    var selectedHour by rememberSaveable(initialReminderAt) {
+        mutableStateOf(SimpleDateFormat("HH", Locale.getDefault()).format(Date(initialMillis)).toInt())
     }
-    var minuteText by rememberSaveable(initialReminderAt) {
-        mutableStateOf(SimpleDateFormat("mm", Locale.getDefault()).format(Date(initialMillis)))
+    var selectedMinute by rememberSaveable(initialReminderAt) {
+        mutableStateOf(SimpleDateFormat("mm", Locale.getDefault()).format(Date(initialMillis)).toInt())
     }
-    val hour = hourText.toIntOrNull()?.coerceIn(0, 23)
-    val minute = minuteText.toIntOrNull()?.coerceIn(0, 59)
 
     DatePickerDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             TextButton(
-                enabled = state.selectedDateMillis != null && hour != null && minute != null,
+                enabled = state.selectedDateMillis != null,
                 onClick = {
                     val selectedDay = state.selectedDateMillis ?: return@TextButton
                     val day = utcDayKey(selectedDay)
-                    val reminderAt = dateKeyToLocalMillis(day, hour ?: 0, minute ?: 0)
+                    val reminderAt = dateKeyToLocalMillis(day, selectedHour, selectedMinute)
                     onSelected(reminderAt)
                 }
             ) {
@@ -1125,21 +1275,58 @@ internal fun TodoReminderEditDialog(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedTextField(
-                    value = hourText,
-                    onValueChange = { hourText = it.filter(Char::isDigit).take(2) },
+                ReminderTimeDropdown(
+                    value = selectedHour,
+                    options = (0..23).toList(),
+                    label = "时",
+                    onSelected = { selectedHour = it },
                     modifier = Modifier.weight(1f),
-                    label = { Text("小时") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                 )
-                OutlinedTextField(
-                    value = minuteText,
-                    onValueChange = { minuteText = it.filter(Char::isDigit).take(2) },
+                ReminderTimeDropdown(
+                    value = selectedMinute,
+                    options = (0..59).toList(),
+                    label = "分",
+                    onSelected = { selectedMinute = it },
                     modifier = Modifier.weight(1f),
-                    label = { Text("分钟") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ReminderTimeDropdown(
+    value: Int,
+    options: List<Int>,
+    label: String,
+    onSelected: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier = modifier) {
+        OutlinedButton(
+            onClick = { expanded = true },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                text = "%02d $label".format(value),
+                modifier = Modifier.weight(1f),
+                textAlign = TextAlign.Start,
+                fontWeight = FontWeight.SemiBold
+            )
+            Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            options.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text("%02d $label".format(option)) },
+                    onClick = {
+                        onSelected(option)
+                        expanded = false
+                    }
                 )
             }
         }

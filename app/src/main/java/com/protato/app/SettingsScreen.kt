@@ -154,6 +154,7 @@ import com.protato.app.ui.screens.settings.LlmProviderListCard
 import com.protato.app.ui.screens.settings.NicknameSettingsCard
 import com.protato.app.ui.screens.settings.ProjectVersionCard
 import com.protato.app.ui.screens.settings.RecordPolishProviderCard
+import com.protato.app.ui.screens.settings.ThemeSettingsCard
 import com.protato.app.ui.screens.settings.WebDevSyncSettingsCard
 import com.protato.app.ui.screens.templates.TemplateCard
 import com.protato.app.ui.screens.templates.TemplateAiDialog
@@ -222,6 +223,14 @@ internal fun SettingsScreen(
                 fontScale = appState.fontScale,
                 onChange = { fontScale ->
                     onEvent(ProtatoEvent.UpdateFontScale(fontScale))
+                }
+            )
+        }
+        item {
+            ThemeSettingsCard(
+                selectedTheme = appState.themeChoice,
+                onChange = { themeChoice ->
+                    onEvent(ProtatoEvent.UpdateThemeChoice(themeChoice))
                 }
             )
         }

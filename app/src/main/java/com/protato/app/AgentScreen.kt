@@ -192,10 +192,12 @@ internal fun AgentScreen(
     errorText: String?,
     sessionState: AgentSessionState,
     turnScope: CoroutineScope,
+    contextTodoId: String?,
     onInputChange: (String) -> Unit,
     onLoadingChange: (Boolean) -> Unit,
     onErrorTextChange: (String?) -> Unit,
     onSessionStateChange: (AgentSessionState) -> Unit,
+    onContextTodoIdChange: (String?) -> Unit,
     onEvent: (ProtatoEvent) -> Unit
 ) {
     val nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME }
@@ -224,6 +226,12 @@ internal fun AgentScreen(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        AgentTodoContextSelector(
+            todos = appState.todos.filterNot { it.completed },
+            selectedTodoId = contextTodoId,
+            onSelectedTodoIdChange = onContextTodoIdChange
+        )
+
         LazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
@@ -322,7 +330,8 @@ internal fun AgentScreen(
                             nickname = nickname,
                             handledTodoDraftKeys = turnSessionState.handledTodoDraftKeySet,
                             handledTodoEditKeys = turnSessionState.handledTodoEditKeySet,
-                            hasPendingActions = turnSessionState.hasPendingActions
+                            hasPendingActions = turnSessionState.hasPendingActions,
+                            contextTodoId = contextTodoId
                         )
                         onErrorTextChange(result.errorText)
                         onEvent(ProtatoEvent.AppendAgentMessage("assistant", result.reply))
@@ -332,6 +341,50 @@ internal fun AgentScreen(
                 }
             ) {
                 Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "发送")
+            }
+        }
+    }
+}
+
+@Composable
+internal fun AgentTodoContextSelector(
+    todos: List<TodoItem>,
+    selectedTodoId: String?,
+    onSelectedTodoIdChange: (String?) -> Unit
+) {
+    if (todos.isEmpty()) return
+    val selectedTodo = todos.firstOrNull { it.id == selectedTodoId }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "上下文待办",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (selectedTodo != null) {
+                TextButton(onClick = { onSelectedTodoIdChange(null) }) {
+                    Text("取消选择")
+                }
+            }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(todos.take(12), key = { it.id }) { todo ->
+                FilterChip(
+                    selected = todo.id == selectedTodoId,
+                    onClick = {
+                        onSelectedTodoIdChange(
+                            if (todo.id == selectedTodoId) null else todo.id
+                        )
+                    },
+                    label = {
+                        Text(
+                            todo.title,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                )
             }
         }
     }
@@ -493,6 +546,21 @@ internal fun AgentTodoEditDraftCard(
                             timeLabel = ::formatTime,
                             tagColor = ::todoTagColor
                         )
+                        if (edit.subtasks != null) {
+                            Text(
+                                "子任务",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            edit.subtasks.take(6).forEachIndexed { index, subtask ->
+                                Text(
+                                    "${index + 1}. ${subtask.title}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     }
                 }
             }

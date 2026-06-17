@@ -11,10 +11,14 @@ import java.util.Locale
 internal fun String.looksLikeTodoPlanningRequest(hasPlanningContext: Boolean = false): Boolean {
     val lowered = lowercase(Locale.getDefault())
     if (lowered.looksLikeTodoQuery()) return false
+    val questionLike = listOf("什么", "哪些", "几", "吗", "？", "?", "如何", "怎么").any { it in lowered }
     val strongPlanningVerb = listOf(
         "帮我安排",
         "帮我规划",
         "帮我拆",
+        "帮我优化",
+        "帮我改进",
+        "帮我修复",
         "拆成",
         "整理成待办",
         "生成待办",
@@ -25,15 +29,20 @@ internal fun String.looksLikeTodoPlanningRequest(hasPlanningContext: Boolean = f
         "做个计划",
         "安排一下",
         "规划一下",
+        "优化一下",
+        "改进一下",
+        "修复一下",
         "帮我做计划",
         "帮我列计划"
     ).any { it in lowered }
     if (strongPlanningVerb) return true
-    if (listOf("安排", "规划", "拆解", "整理").any { it in lowered }) return true
+    val goalVerb = listOf("完成", "优化", "改进", "修复", "实现", "开发", "设计").any { it in lowered }
+    if (goalVerb && !questionLike && lowered.length >= 4) return true
+    if (listOf("安排", "规划", "拆解", "整理").any { it in lowered } && !questionLike) return true
     if (!hasPlanningContext) return false
-    if (listOf("什么", "哪些", "几", "吗", "？", "?").any { it in lowered }) return false
+    if (questionLike) return false
     val weakPlanningVerb = listOf("安排", "规划", "拆解", "整理", "列出", "罗列").any { it in lowered }
-    val taskContext = listOf("任务", "待办", "计划", "行程", "事情", "项目").any { it in lowered }
+    val taskContext = listOf("任务", "待办", "计划", "行程", "事情", "项目", "优化", "交互", "卡片").any { it in lowered }
     return weakPlanningVerb && taskContext
 }
 

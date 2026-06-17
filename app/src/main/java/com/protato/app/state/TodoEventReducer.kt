@@ -107,6 +107,21 @@ internal fun reduceTodoEvent(
             )
         }
 
+        is ProtatoEvent.MoveTodosToToday -> {
+            val today = dayKey(System.currentTimeMillis())
+            StateReduction(
+                state.copy(
+                    todos = state.todos.map { todo ->
+                        if (todo.id in event.todoIds && !todo.completed) {
+                            todo.copy(dueDate = today)
+                        } else {
+                            todo
+                        }
+                    }
+                )
+            )
+        }
+
         is ProtatoEvent.UpdateTodo -> {
             StateReduction(
                 state.copy(

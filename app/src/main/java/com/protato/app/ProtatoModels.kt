@@ -38,6 +38,12 @@ enum class TodoComplexity {
     Complex
 }
 
+enum class ProtatoThemeChoice {
+    Mint,
+    SeaSalt,
+    Berry
+}
+
 data class TodoCompletionReview(
     val problems: String,
     val solution: String,
@@ -175,7 +181,8 @@ data class AppState(
     val agentMemory: String = "",
     val webDevSync: WebDevSyncSettings = WebDevSyncSettings(),
     val recordPolishProviderId: String = "",
-    val fontScale: Float = 1.0f
+    val fontScale: Float = 1.0f,
+    val themeChoice: ProtatoThemeChoice = ProtatoThemeChoice.Mint
 )
 
 const val DEFAULT_NICKNAME = "专注者"

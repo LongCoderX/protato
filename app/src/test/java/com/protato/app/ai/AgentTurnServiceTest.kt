@@ -1,6 +1,7 @@
 package com.protato.app.ai
 
 import com.protato.app.AppState
+import com.protato.app.AgentConversationMessage
 import com.protato.app.TodoItem
 import com.protato.app.util.dayKey
 import kotlinx.coroutines.runBlocking
@@ -42,6 +43,59 @@ class AgentTurnServiceTest {
 
         assertEquals(emptyList<com.protato.app.TodoDraft>(), result.todoDrafts)
         assertTrue(result.reply.contains("不会重复提交"))
+    }
+
+    @Test
+    fun standaloneOptimizationGoalCreatesConfirmationCardDrafts() = runBlocking {
+        val result = runAgentTurn(
+            text = "完成Protato的优化",
+            userState = AppState(todos = emptyList(), agentMessages = emptyList()),
+            agent = null,
+            provider = null,
+            nickname = "测试用户",
+            handledTodoDraftKeys = emptySet(),
+            handledTodoEditKeys = emptySet()
+        )
+
+        assertTrue(result.reply.contains("卡片") || result.reply.contains("确认"))
+        assertTrue(result.todoDrafts.any { it.title.contains("Protato") || it.title.contains("优化") })
+        assertTrue(result.todoEdits.isEmpty())
+    }
+
+    @Test
+    fun planningAffirmationUsesRecentGoalForCardDrafts() = runBlocking {
+        val result = runAgentTurn(
+            text = "对，就是这个意思",
+            userState = AppState(
+                todos = emptyList(),
+                agentMessages = listOf(
+                    AgentConversationMessage(
+                        id = "m1",
+                        role = "user",
+                        content = "优化交互相关的"
+                    ),
+                    AgentConversationMessage(
+                        id = "m2",
+                        role = "assistant",
+                        content = "你想把交互优化整理成待办吗？"
+                    ),
+                    AgentConversationMessage(
+                        id = "m3",
+                        role = "user",
+                        content = "对，就是这个意思"
+                    )
+                )
+            ),
+            agent = null,
+            provider = null,
+            nickname = "测试用户",
+            handledTodoDraftKeys = emptySet(),
+            handledTodoEditKeys = emptySet()
+        )
+
+        assertTrue(result.reply.contains("卡片") || result.reply.contains("确认"))
+        assertTrue(result.todoDrafts.any { it.title.contains("交互") || it.title.contains("优化") })
+        assertTrue(result.todoEdits.isEmpty())
     }
 
     @Test
@@ -137,6 +191,28 @@ class AgentTurnServiceTest {
         assertEquals(listOf("todo-1", "todo-2"), result.todoEdits.map { it.id })
         assertTrue(result.todoEdits.all { it.dueDate == today })
         assertTrue(result.todoDrafts.isEmpty())
+    }
+
+    @Test
+    fun selectedContextTodoCanBePlannedIntoSubtasks() = runBlocking {
+        val result = runAgentTurn(
+            text = "把当前任务拆分成子任务",
+            userState = AppState(
+                todos = listOf(TodoItem(id = "todo-1", title = "完成Protato优化")),
+                agentMessages = emptyList()
+            ),
+            agent = null,
+            provider = null,
+            nickname = "测试用户",
+            handledTodoDraftKeys = emptySet(),
+            handledTodoEditKeys = emptySet(),
+            contextTodoId = "todo-1"
+        )
+
+        assertEquals(emptyList<com.protato.app.TodoDraft>(), result.todoDrafts)
+        assertEquals(listOf("todo-1"), result.todoEdits.map { it.id })
+        assertTrue(result.todoEdits.single().subtasks.orEmpty().isNotEmpty())
+        assertTrue(result.reply.contains("子任务草案"))
     }
 
     @Test

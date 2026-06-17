@@ -98,6 +98,8 @@ internal fun todoTagColor(tag: String): Color {
 internal fun formatDayLabel(key: String): String {
     val today = dayKey(System.currentTimeMillis())
     if (key == today) return "今天"
+    val yesterday = dayKey(System.currentTimeMillis() - 24L * 60L * 60L * 1000L)
+    if (key == yesterday) return "昨天"
     val parser = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
     val formatter = SimpleDateFormat("MM月dd日", Locale.getDefault())
     return try {

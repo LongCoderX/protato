@@ -45,7 +45,8 @@ internal object AppStateJsonCodec {
             webDevSync = root.optJSONObject("webDevSync")?.toWebDevSyncSettings()
                 ?: WebDevSyncSettings(),
             recordPolishProviderId = root.optString("recordPolishProviderId"),
-            fontScale = root.optDouble("fontScale", 1.0).toFloat().coerceIn(0.85f, 1.3f)
+            fontScale = root.optDouble("fontScale", 1.0).toFloat().coerceIn(0.85f, 1.3f),
+            themeChoice = root.optString("themeChoice").toProtatoThemeChoice()
         )
     }
 
@@ -69,6 +70,7 @@ internal object AppStateJsonCodec {
             .put("webDevSync", state.webDevSync.toJson())
             .put("recordPolishProviderId", state.recordPolishProviderId)
             .put("fontScale", state.fontScale.toDouble())
+            .put("themeChoice", state.themeChoice.name)
             .toString(2)
     }
 }
@@ -100,6 +102,10 @@ private fun JSONArray.toTodoSubtasks(): List<TodoSubtask> = mapObjects { item ->
 
 private fun String.toTodoComplexity(): TodoComplexity {
     return runCatching { TodoComplexity.valueOf(this) }.getOrDefault(TodoComplexity.Simple)
+}
+
+private fun String.toProtatoThemeChoice(): ProtatoThemeChoice {
+    return runCatching { ProtatoThemeChoice.valueOf(this) }.getOrDefault(ProtatoThemeChoice.Mint)
 }
 
 private fun JSONObject.toTodoCompletionReview(): TodoCompletionReview? {

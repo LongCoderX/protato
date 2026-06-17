@@ -2,7 +2,10 @@ package com.protato.app.ai
 
 import com.protato.app.TodoDraft
 import com.protato.app.TodoEditDraft
+import com.protato.app.TodoComplexity
+import com.protato.app.TodoSubtask
 import com.protato.app.todoEditDraftKey
+import com.protato.app.util.newId
 import com.protato.app.util.normalizedReminderAt
 import com.protato.app.util.normalizedTodoDate
 import com.protato.app.util.parseTodoTags
@@ -187,13 +190,17 @@ internal fun parseAgentTodoEditToolCall(rawJson: String): List<TodoEditDraft> {
                     null
                 }
                 val completed = if (item.has("completed")) item.optBoolean("completed") else null
+                val complexity = item.optionalNonBlankString("complexity")?.let(::parseAgentTodoComplexity)
+                val subtasks = item.optJSONArray("subtasks")?.toAgentSubtasks()
                 if (
                     title == null &&
                     dueDate == null &&
                     reminderAt == null &&
                     tags == null &&
                     plannedPomodoros == null &&
-                    completed == null
+                    completed == null &&
+                    complexity == null &&
+                    subtasks == null
                 ) {
                     continue
                 }
@@ -205,12 +212,35 @@ internal fun parseAgentTodoEditToolCall(rawJson: String): List<TodoEditDraft> {
                         reminderAt = reminderAt,
                         tags = tags,
                         plannedPomodoros = plannedPomodoros,
-                        completed = completed
+                        completed = completed,
+                        complexity = complexity,
+                        subtasks = subtasks
                     )
                 )
             }
         }
     }.getOrElse { emptyList() }
+}
+
+private fun parseAgentTodoComplexity(raw: String): TodoComplexity? {
+    return when (raw.trim().lowercase(Locale.getDefault())) {
+        "complex", "复杂", "大任务", "project" -> TodoComplexity.Complex
+        "simple", "简单", "小任务" -> TodoComplexity.Simple
+        else -> null
+    }
+}
+
+private fun JSONArray.toAgentSubtasks(): List<TodoSubtask> {
+    return buildList {
+        for (index in 0 until length()) {
+            val value = when (val raw = opt(index)) {
+                is JSONObject -> raw.optString("title")
+                else -> raw?.toString().orEmpty()
+            }.trim().take(60)
+            if (value.isBlank()) continue
+            add(TodoSubtask(id = newId(), title = value))
+        }
+    }.distinctBy { it.title.lowercase(Locale.getDefault()) }.take(12)
 }
 
 private fun JSONArray.toAgentStringList(): List<String> {

@@ -205,7 +205,7 @@ fun ProtatoApp() {
 
     val todayKey = dayKey(System.currentTimeMillis())
     val selectedTodo = appState.todos.firstOrNull {
-        it.id == selectedTodoId && !it.completed && it.dueDate == todayKey
+        it.id == selectedTodoId && !it.completed
     }
     val selectedTemplate = appState.templates.firstOrNull { it.id == appState.selectedTemplateId }
         ?: appState.templates.firstOrNull()
@@ -289,7 +289,10 @@ fun ProtatoApp() {
         }
     }
 
-    ProtatoTheme(fontScale = appState.fontScale) {
+    ProtatoTheme(
+        fontScale = appState.fontScale,
+        themeChoice = appState.themeChoice
+    ) {
         var currentTab by rememberSaveable { mutableStateOf(MainTab.Agent) }
         var secondaryDestination by rememberSaveable { mutableStateOf<SecondaryDestination?>(null) }
         fun selectTab(tab: MainTab) {
@@ -350,16 +353,18 @@ fun ProtatoApp() {
                             errorText = agentErrorText,
                             sessionState = agentSessionState,
                             turnScope = scope,
+                            contextTodoId = selectedTodoId,
                             onInputChange = { agentInput = it },
                             onLoadingChange = { agentLoading = it },
                             onErrorTextChange = { agentErrorText = it },
                             onSessionStateChange = { agentSessionState = it },
+                            onContextTodoIdChange = { selectedTodoId = it },
                             onEvent = ::dispatchEvent
                         )
 
                         MainTab.Focus -> FocusScreen(
                             appState = appState,
-                            selectedTodoId = selectedTodoId,
+                            selectedTodoId = activeSession?.todoId ?: selectedTodoId,
                             selectedTemplate = selectedTemplate,
                             providers = appState.llmProviders,
                             agents = appState.agents,
@@ -371,7 +376,18 @@ fun ProtatoApp() {
                             hasPausedSession = hasPausedSession,
                             pendingRecord = pendingRecord,
                             onEvent = ::dispatchEvent,
-                            onSelectedTodo = { selectedTodoId = it },
+                            onSelectedTodo = { todoId ->
+                                selectedTodoId = todoId
+                                val updatedTodo = appState.todos.firstOrNull { it.id == todoId }
+                                if (activeSession != null) {
+                                    dispatchEvent(
+                                        ProtatoEvent.UpdateActiveSessionTodo(
+                                            todoId = updatedTodo?.id,
+                                            todoTitle = updatedTodo?.title ?: "未绑定任务"
+                                        )
+                                    )
+                                }
+                            },
                             onModeChange = { mode ->
                                 timerMode = mode
                                 dispatchEvent(ProtatoEvent.ClearActiveSession)
@@ -450,6 +466,9 @@ fun ProtatoApp() {
                             },
                             onUpdate = { updatedItem ->
                                 dispatchEvent(ProtatoEvent.UpdateTodo(updatedItem))
+                            },
+                            onMoveManyToToday = { itemIds ->
+                                dispatchEvent(ProtatoEvent.MoveTodosToToday(itemIds))
                             },
                             onDeleteMany = { itemIds ->
                                 dispatchEvent(ProtatoEvent.DeleteTodos(itemIds))

@@ -43,6 +43,38 @@ class AgentIntentResolverTest {
     }
 
     @Test
+    fun resolvesStandaloneOptimizationGoalAsPlanning() {
+        val result = resolver.resolve(
+            AgentIntentRequest(userText = "完成Protato的优化")
+        )
+
+        assertTrue(result.intent is AgentIntent.PlanTodos)
+    }
+
+    @Test
+    fun resolvesOptimizationFollowUpAsPlanning() {
+        val result = resolver.resolve(
+            AgentIntentRequest(
+                userText = "优化交互相关的",
+                recentMessages = listOf(
+                    AgentConversationMessage(
+                        id = "m1",
+                        role = "user",
+                        content = "完成Protato的优化"
+                    ),
+                    AgentConversationMessage(
+                        id = "m2",
+                        role = "assistant",
+                        content = "我可以帮你整理成待办草案。"
+                    )
+                )
+            )
+        )
+
+        assertTrue(result.intent is AgentIntent.PlanTodos)
+    }
+
+    @Test
     fun resolvesTodayTodoQuestionAsQuery() {
         val result = resolver.resolve(
             AgentIntentRequest(userText = "今天有什么任务？")
@@ -115,6 +147,34 @@ class AgentIntentResolverTest {
                         id = "m1",
                         role = "assistant",
                         content = "我可以把你的想法整理成待办。"
+                    )
+                )
+            )
+        )
+
+        assertTrue(result.intent is AgentIntent.PlanTodos)
+    }
+
+    @Test
+    fun resolvesAffirmationWithPlanningContextAsPlanning() {
+        val result = resolver.resolve(
+            AgentIntentRequest(
+                userText = "对，就是这个意思",
+                recentMessages = listOf(
+                    AgentConversationMessage(
+                        id = "m1",
+                        role = "user",
+                        content = "优化交互相关的"
+                    ),
+                    AgentConversationMessage(
+                        id = "m2",
+                        role = "assistant",
+                        content = "你想把交互优化整理成待办吗？"
+                    ),
+                    AgentConversationMessage(
+                        id = "m3",
+                        role = "user",
+                        content = "对，就是这个意思"
                     )
                 )
             )

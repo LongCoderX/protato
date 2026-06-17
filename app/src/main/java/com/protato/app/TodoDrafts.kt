@@ -230,17 +230,26 @@ internal data class TodoEditDraft(
     val reminderAt: Long? = null,
     val tags: List<String>? = null,
     val plannedPomodoros: Int? = null,
-    val completed: Boolean? = null
+    val completed: Boolean? = null,
+    val complexity: TodoComplexity? = null,
+    val subtasks: List<TodoSubtask>? = null
 ) {
     fun applyTo(todo: TodoItem): TodoItem {
-        return todo.copy(
+        val updated = todo.copy(
             title = title ?: todo.title,
             dueDate = dueDate ?: todo.dueDate,
             reminderAt = reminderAt ?: todo.reminderAt,
             tags = tags ?: todo.tags,
             plannedPomodoros = plannedPomodoros ?: todo.plannedPomodoros,
-            completed = completed ?: todo.completed
+            completed = completed ?: todo.completed,
+            complexity = complexity ?: todo.complexity,
+            subtasks = subtasks ?: todo.subtasks
         )
+        return if (subtasks != null) {
+            updated.copy(summary = summarizeTodoWithSubtasks(updated))
+        } else {
+            updated
+        }
     }
 
     fun previewTitle(original: TodoItem?): String {
@@ -266,7 +275,9 @@ internal fun todoEditDraftKey(edit: TodoEditDraft): String {
         edit.reminderAt?.toString().orEmpty(),
         edit.tags?.joinToString(",").orEmpty(),
         edit.plannedPomodoros?.toString().orEmpty(),
-        edit.completed?.toString().orEmpty()
+        edit.completed?.toString().orEmpty(),
+        edit.complexity?.name.orEmpty(),
+        edit.subtasks?.joinToString(",") { "${it.title}:${it.completed}" }.orEmpty()
     ).joinToString("|").lowercase(Locale.getDefault())
 }
 

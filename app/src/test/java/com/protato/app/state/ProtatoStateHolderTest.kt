@@ -16,6 +16,7 @@ import com.protato.app.TodoComplexity
 import com.protato.app.TodoDraft
 import com.protato.app.TodoEditDraft
 import com.protato.app.TodoItem
+import com.protato.app.TodoSubtask
 import com.protato.app.defaultTemplate
 import com.protato.app.util.dayKey
 import org.junit.Assert.assertEquals
@@ -131,6 +132,19 @@ class ProtatoStateHolderTest {
             ),
             result.effects
         )
+    }
+
+    @Test
+    fun dispatchMoveTodosToTodayOnlyMovesIncompleteTodos() {
+        val yesterday = "2026-06-15"
+        val openTodo = TodoItem(id = "todo-1", title = "昨天未完成", dueDate = yesterday)
+        val completedTodo = TodoItem(id = "todo-2", title = "昨天已完成", completed = true, dueDate = yesterday)
+        val holder = testHolder(AppState(todos = listOf(openTodo, completedTodo)))
+
+        holder.dispatch(ProtatoEvent.MoveTodosToToday(setOf("todo-1", "todo-2")))
+
+        assertEquals(dayKey(System.currentTimeMillis()), holder.appState.todos[0].dueDate)
+        assertEquals(yesterday, holder.appState.todos[1].dueDate)
     }
 
     @Test
@@ -285,6 +299,19 @@ class ProtatoStateHolderTest {
     }
 
     @Test
+    fun dispatchUpdateActiveSessionTodoRebindsRunningSession() {
+        val session = testSession().copy(todoId = null, todoTitle = "未绑定任务")
+        val holder = testHolder(AppState(activeSession = session))
+
+        holder.dispatch(ProtatoEvent.UpdateActiveSessionTodo("todo-2", "写文档"))
+
+        assertEquals("todo-2", holder.appState.activeSession?.todoId)
+        assertEquals("写文档", holder.appState.activeSession?.todoTitle)
+        assertEquals(session.endsAt, holder.appState.activeSession?.endsAt)
+        assertEquals(session.totalSeconds, holder.appState.activeSession?.totalSeconds)
+    }
+
+    @Test
     fun dispatchPauseActiveSessionStoresRemainingSecondsAndStopsTimerEffects() {
         val holder = testHolder(AppState(activeSession = testSession()))
 
@@ -394,13 +421,19 @@ class ProtatoStateHolderTest {
         val todo = TodoItem(id = "todo-1", title = "旧标题", plannedPomodoros = 1)
         val holder = testHolder(AppState(todos = listOf(todo), agentMessages = emptyList()))
         val edits = listOf(
-            TodoEditDraft(id = "todo-1", title = "新标题", plannedPomodoros = 3)
+            TodoEditDraft(
+                id = "todo-1",
+                title = "新标题",
+                plannedPomodoros = 3,
+                subtasks = listOf(TodoSubtask(id = "sub-1", title = "第一步"))
+            )
         )
 
         holder.dispatch(ProtatoEvent.AcceptAgentTodoEdits(edits))
 
         assertEquals("新标题", holder.appState.todos.single().title)
         assertEquals(3, holder.appState.todos.single().plannedPomodoros)
+        assertEquals(listOf("第一步"), holder.appState.todos.single().subtasks.map { it.title })
         assertEquals("已更新 1 个待办。", holder.appState.agentMessages.single().content)
     }
 

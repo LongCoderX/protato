@@ -28,7 +28,7 @@ class AgentActionParserTest {
     fun parsesNativeToolCallsIntoTodoUpdates() {
         val response = parseAgentToolResponse(
             """
-            {"tool_calls":[{"function":{"name":"propose_todo_updates","arguments":"{\"edits\":[{\"id\":\"todo-1\",\"title\":\"整理新版周报\",\"plannedPomodoros\":3}]}"}}]}
+            {"tool_calls":[{"function":{"name":"propose_todo_updates","arguments":"{\"edits\":[{\"id\":\"todo-1\",\"title\":\"整理新版周报\",\"plannedPomodoros\":3,\"complexity\":\"complex\",\"subtasks\":[\"梳理范围\",\"补测试\"]}]}"}}]}
             """.trimIndent()
         )
 
@@ -36,6 +36,8 @@ class AgentActionParserTest {
         assertEquals("todo-1", response.todoEdits.single().id)
         assertEquals("整理新版周报", response.todoEdits.single().title)
         assertEquals(3, response.todoEdits.single().plannedPomodoros)
+        assertEquals(2, response.todoEdits.single().subtasks?.size)
+        assertEquals("梳理范围", response.todoEdits.single().subtasks?.first()?.title)
         assertTrue(response.actions.any { it is AgentAction.ProposeTodoUpdates })
     }
 

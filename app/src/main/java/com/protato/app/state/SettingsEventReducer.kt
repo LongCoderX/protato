@@ -16,6 +16,10 @@ internal fun reduceSettingsEvent(
             StateReduction(state.copy(fontScale = event.fontScale.coerceIn(0.85f, 1.3f)))
         }
 
+        is ProtatoEvent.UpdateThemeChoice -> {
+            StateReduction(state.copy(themeChoice = event.themeChoice))
+        }
+
         is ProtatoEvent.UpdateWebDavSync -> {
             StateReduction(state.copy(webDevSync = event.settings))
         }

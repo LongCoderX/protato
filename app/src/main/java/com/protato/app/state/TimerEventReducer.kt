@@ -36,6 +36,18 @@ internal fun reduceTimerEvent(
             )
         }
 
+        is ProtatoEvent.UpdateActiveSessionTodo -> {
+            val session = state.activeSession ?: return StateReduction(state)
+            StateReduction(
+                state.copy(
+                    activeSession = session.copy(
+                        todoId = event.todoId,
+                        todoTitle = event.todoTitle.ifBlank { "未绑定任务" }
+                    )
+                )
+            )
+        }
+
         is ProtatoEvent.PauseActiveSession -> {
             val session = state.activeSession
                 ?: return StateReduction(state)

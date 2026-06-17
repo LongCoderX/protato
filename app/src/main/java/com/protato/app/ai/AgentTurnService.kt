@@ -3,11 +3,16 @@ package com.protato.app.ai
 import com.protato.app.AgentSettings
 import com.protato.app.AppState
 import com.protato.app.LlmProviderSettings
+import com.protato.app.TodoComplexity
 import com.protato.app.TodoDraft
 import com.protato.app.TodoEditDraft
+import com.protato.app.TodoItem
+import com.protato.app.TodoSubtask
 import com.protato.app.filterNewTodoDrafts
 import com.protato.app.filterNewTodoEdits
+import com.protato.app.util.newId
 import com.protato.app.util.dayKey
+import java.util.Locale
 
 internal data class AgentTurnResult(
     val reply: String,
@@ -24,7 +29,8 @@ internal suspend fun runAgentTurn(
     nickname: String,
     handledTodoDraftKeys: Set<String>,
     handledTodoEditKeys: Set<String>,
-    hasPendingActions: Boolean = false
+    hasPendingActions: Boolean = false,
+    contextTodoId: String? = null
 ): AgentTurnResult {
     val intent = AgentIntentResolver().resolve(
         AgentIntentRequest(
@@ -58,6 +64,32 @@ internal suspend fun runAgentTurn(
             )
         }
 
+        is AgentIntent.PlanSubtasks -> {
+            val targetTodo = findAgentContextTodo(userState.todos, contextTodoId, intent.targetHint)
+            if (targetTodo == null) {
+                return AgentTurnResult(reply = "我还不能确定要拆分哪一个待办。请先在对话页选择一个待办，或在消息里写清楚待办标题。")
+            }
+            val edit = TodoEditDraft(
+                id = targetTodo.id,
+                complexity = TodoComplexity.Complex,
+                subtasks = localPlanSubtasks(intent.rawGoal, targetTodo).ifEmpty {
+                    defaultSubtasksFor(targetTodo)
+                }
+            )
+            val edits = listOf(edit).filterNewTodoEdits(
+                existingTodos = userState.todos,
+                handledKeys = handledTodoEditKeys
+            )
+            return AgentTurnResult(
+                reply = if (edits.isEmpty()) {
+                    "这个待办的子任务草案已经处理过，或没有新的变化。"
+                } else {
+                    "我把「${targetTodo.title}」拆成了 ${edit.subtasks.orEmpty().size} 个子任务草案，请确认是否应用。"
+                },
+                todoEdits = edits
+            )
+        }
+
         is AgentIntent.AskClarification -> {
             return AgentTurnResult(reply = intent.question)
         }
@@ -72,8 +104,12 @@ internal suspend fun runAgentTurn(
 
         else -> Unit
     }
+    val planningText = when (intent) {
+        is AgentIntent.PlanTodos -> intent.rawGoal
+        else -> text
+    }
     val todoDrafts = createTodoDraftsForTurn(
-        text = text,
+        text = planningText,
         shouldCreate = intent is AgentIntent.PlanTodos,
         userState = userState,
         agent = agent,
@@ -127,6 +163,8 @@ internal suspend fun runAgentTurn(
         finalTodoEdits.isEmpty()
     ) {
         "这些待办草案或编辑草案已经确认、拒绝或不再需要处理，我不会重复提交。"
+    } else if (finalTodoDrafts.isNotEmpty() && parsedTodoDrafts.isEmpty()) {
+        "我整理了 ${finalTodoDrafts.size} 个待办草案，请在下方卡片确认是否添加。"
     } else {
         toolResponse.visibleReply
     }
@@ -136,6 +174,47 @@ internal suspend fun runAgentTurn(
         todoEdits = finalTodoEdits,
         errorText = errorText
     )
+}
+
+private fun findAgentContextTodo(
+    todos: List<TodoItem>,
+    contextTodoId: String?,
+    targetHint: String
+): TodoItem? {
+    contextTodoId?.let { id ->
+        todos.firstOrNull { it.id == id && !it.completed }?.let { return it }
+    }
+    val lowered = targetHint.lowercase(Locale.getDefault())
+    return todos
+        .filterNot { it.completed }
+        .firstOrNull { todo -> todo.title.lowercase(Locale.getDefault()) in lowered }
+        ?: todos.filterNot { it.completed }.firstOrNull { todo ->
+            todo.title.lowercase(Locale.getDefault()).split(Regex("\\s+")).any { it.length >= 2 && it in lowered }
+        }
+}
+
+private fun localPlanSubtasks(rawGoal: String, todo: TodoItem): List<TodoSubtask> {
+    val explicitParts = rawGoal
+        .split(Regex("[\\n；;。]+"))
+        .map { it.normalizeTodoTitle() }
+        .filter { it.isNotBlank() && it != todo.title }
+    val parts = explicitParts.ifEmpty {
+        defaultSubtasksFor(todo).map { it.title }
+    }
+    return parts
+        .distinctBy { it.lowercase(Locale.getDefault()) }
+        .take(8)
+        .map { title -> TodoSubtask(id = newId(), title = title.take(60)) }
+}
+
+private fun defaultSubtasksFor(todo: TodoItem): List<TodoSubtask> {
+    val title = todo.title
+    return listOf(
+        "明确「$title」的完成标准",
+        "整理「$title」需要的资料和约束",
+        "完成「$title」的第一版执行",
+        "检查结果并记录下一步"
+    ).map { TodoSubtask(id = newId(), title = it.take(60)) }
 }
 
 private suspend fun createTodoDraftsForTurn(

@@ -1,6 +1,7 @@
 package com.protato.app.ui.screens.todo
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -21,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DateRange
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
@@ -47,6 +50,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
@@ -140,7 +145,9 @@ fun TodoSwipeBackground(dismissValue: SwipeToDismissBoxValue) {
 @Composable
 fun TodoSelectionBar(
     selectedCount: Int,
+    canMoveToToday: Boolean,
     onCancel: () -> Unit,
+    onMoveToToday: () -> Unit,
     onDelete: () -> Unit
 ) {
     Row(
@@ -159,6 +166,12 @@ fun TodoSelectionBar(
             modifier = Modifier.weight(1f),
             fontWeight = FontWeight.SemiBold
         )
+        IconButton(
+            enabled = canMoveToToday,
+            onClick = onMoveToToday
+        ) {
+            Icon(Icons.Outlined.DateRange, contentDescription = "移到今天")
+        }
         IconButton(onClick = onDelete) {
             Icon(
                 Icons.Outlined.Delete,
@@ -226,10 +239,9 @@ fun TodoMetadataStrip(
 @Composable
 fun TodoExpandedDetails(
     todo: TodoItem,
-    onToggleSubtask: (String) -> Unit,
     tagColor: (String) -> Color
 ) {
-    if (todo.tags.isEmpty() && todo.subtasks.isEmpty() && todo.summary.isBlank()) return
+    if (todo.tags.isEmpty() && todo.summary.isBlank()) return
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (todo.summary.isNotBlank()) {
@@ -238,28 +250,6 @@ fun TodoExpandedDetails(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodySmall
             )
-        }
-        if (todo.subtasks.isNotEmpty()) {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                todo.subtasks.forEach { subtask ->
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Checkbox(
-                            checked = subtask.completed,
-                            onCheckedChange = { onToggleSubtask(subtask.id) }
-                        )
-                        Text(
-                            subtask.title,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textDecoration = if (subtask.completed) TextDecoration.LineThrough else TextDecoration.None,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
         }
         if (todo.tags.isNotEmpty()) {
             LazyRow(
@@ -271,6 +261,114 @@ fun TodoExpandedDetails(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun TodoSubtaskTree(
+    todo: TodoItem,
+    expanded: Boolean,
+    onToggleSubtask: (String) -> Unit
+) {
+    if (todo.subtasks.isEmpty()) return
+
+    val visibleSubtasks = if (expanded) {
+        todo.subtasks
+    } else {
+        todo.subtasks.take(3)
+    }
+    val hiddenCount = todo.subtasks.size - visibleSubtasks.size
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(2.dp)
+    ) {
+        visibleSubtasks.forEachIndexed { index, subtask ->
+            TodoSubtaskTreeRow(
+                title = subtask.title,
+                completed = subtask.completed,
+                isLastVisible = index == visibleSubtasks.lastIndex && hiddenCount == 0,
+                onToggle = { onToggleSubtask(subtask.id) }
+            )
+        }
+        if (hiddenCount > 0) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TodoTreeConnector(isLast = true)
+                Text(
+                    text = "还有 $hiddenCount 个子任务",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TodoSubtaskTreeRow(
+    title: String,
+    completed: Boolean,
+    isLastVisible: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        TodoTreeConnector(isLast = isLastVisible)
+        Checkbox(
+            checked = completed,
+            onCheckedChange = { onToggle() },
+            modifier = Modifier.size(34.dp)
+        )
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            color = if (completed) {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            textDecoration = if (completed) TextDecoration.LineThrough else TextDecoration.None,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun TodoTreeConnector(isLast: Boolean) {
+    val color = MaterialTheme.colorScheme.outline.copy(alpha = 0.7f)
+    Canvas(
+        modifier = Modifier
+            .width(28.dp)
+            .height(34.dp)
+    ) {
+        val x = 9.dp.toPx()
+        val branchY = size.height / 2f
+        drawLine(
+            color = color,
+            start = Offset(x, 0f),
+            end = Offset(x, if (isLast) branchY else size.height),
+            strokeWidth = 1.5.dp.toPx(),
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = color,
+            start = Offset(x, branchY),
+            end = Offset(size.width, branchY),
+            strokeWidth = 1.5.dp.toPx(),
+            cap = StrokeCap.Round
+        )
     }
 }
 
@@ -381,10 +479,14 @@ fun TodoRow(
                         tagColor = ::todoTagColor,
                         includeTags = !expanded
                     )
+                    TodoSubtaskTree(
+                        todo = todo,
+                        expanded = expanded,
+                        onToggleSubtask = onToggleSubtask
+                    )
                     if (expanded) {
                         TodoExpandedDetails(
                             todo = todo,
-                            onToggleSubtask = onToggleSubtask,
                             tagColor = ::todoTagColor
                         )
                     }

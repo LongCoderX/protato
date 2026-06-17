@@ -393,25 +393,19 @@ internal fun TimerCard(
                                     }
                                 )
                                 if (showFocusControls) {
-                                    Surface(
+                                    Text(
+                                        text = selectedTodoTitle ?: "选择一个待办开始",
                                         modifier = Modifier
                                             .widthIn(max = ringSize * 0.78f)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable(enabled = !isRunning) {
+                                            .clickable {
                                                 choosingTodo = true
                                             },
-                                        color = MaterialTheme.colorScheme.surfaceVariant
-                                    ) {
-                                        Text(
-                                            text = selectedTodoTitle ?: "选择一个待办开始",
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 2,
-                                            overflow = TextOverflow.Ellipsis,
-                                            textAlign = TextAlign.Center
-                                        )
-                                    }
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                        textAlign = TextAlign.Center
+                                    )
                                 } else {
                                     Text(
                                         text = "起身、喝水、离开屏幕一会儿",
@@ -490,7 +484,7 @@ internal fun TimerCard(
         val todayKey = dayKey(System.currentTimeMillis())
         TodoSelectDialog(
             todos = todos
-                .filter { !it.completed && (it.dueDate == null || it.dueDate == todayKey) }
+                .filter { !it.completed }
                 .sortedForAction(todayKey),
             selectedTodoId = selectedTodoId,
             onDismiss = { choosingTodo = false },
