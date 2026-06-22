@@ -6,7 +6,6 @@ internal fun selectUnifiedAgent(agents: List<AgentSettings>): AgentSettings? {
     val enabledAgents = agents.filter { it.enabled }
     return enabledAgents.firstOrNull { it.id == "agent-unified" }
         ?: enabledAgents.firstOrNull()
-        ?: agents.firstOrNull()
 }
 
 internal fun selectEncouragerAgent(agents: List<AgentSettings>): AgentSettings? {

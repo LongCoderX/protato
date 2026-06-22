@@ -15,11 +15,23 @@ data class LlmChatMessage(
     val content: String
 )
 
+internal data class LlmChatTool(
+    val name: String,
+    val description: String,
+    val parameters: JSONObject
+)
+
 internal fun LlmProviderSettings.isConfiguredForChat(): Boolean {
-    return endpoint.isNotBlank() && modelName.isNotBlank() && apiKey.isNotBlank()
+    return endpoint.isNotBlank() &&
+        endpoint.trim().startsWith("https://", ignoreCase = true) &&
+        modelName.isNotBlank() &&
+        apiKey.isNotBlank()
 }
 
 suspend fun fetchLlmModels(endpoint: String, apiKey: String): List<String> {
+    require(endpoint.trim().startsWith("https://", ignoreCase = true)) {
+        "AI endpoint 必须使用 HTTPS"
+    }
     return withContext(Dispatchers.IO) {
         val connection = (URL(normalizeModelsEndpoint(endpoint)).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
@@ -49,10 +61,14 @@ suspend fun fetchLlmModels(endpoint: String, apiKey: String): List<String> {
     }
 }
 
-suspend fun requestLlmChat(
+internal suspend fun requestLlmChat(
     provider: LlmProviderSettings,
-    messages: List<LlmChatMessage>
+    messages: List<LlmChatMessage>,
+    tools: List<LlmChatTool> = emptyList()
 ): String {
+    require(provider.endpoint.trim().startsWith("https://", ignoreCase = true)) {
+        "AI endpoint 必须使用 HTTPS"
+    }
     return withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("model", provider.modelName)
@@ -69,6 +85,11 @@ suspend fun requestLlmChat(
                     }
                 }
             )
+        if (tools.isNotEmpty()) {
+            body
+                .put("tools", tools.toChatCompletionToolsJson())
+                .put("tool_choice", "auto")
+        }
         val connection = (URL(normalizeChatEndpoint(provider.endpoint)).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             connectTimeout = 15_000
@@ -96,6 +117,24 @@ suspend fun requestLlmChat(
             }
         } finally {
             connection.disconnect()
+        }
+    }
+}
+
+private fun List<LlmChatTool>.toChatCompletionToolsJson(): JSONArray {
+    return JSONArray().apply {
+        forEach { tool ->
+            put(
+                JSONObject()
+                    .put("type", "function")
+                    .put(
+                        "function",
+                        JSONObject()
+                            .put("name", tool.name)
+                            .put("description", tool.description)
+                            .put("parameters", tool.parameters)
+                    )
+            )
         }
     }
 }
@@ -135,9 +174,26 @@ private fun parseModelNames(body: String): List<String> {
     }.filter { it.isNotBlank() }.distinct()
 }
 
-private fun parseChatContent(body: String): String {
+internal fun parseChatContent(body: String): String {
     val root = JSONObject(body)
     val choice = root.optJSONArray("choices")?.optJSONObject(0) ?: return ""
-    val messageContent = choice.optJSONObject("message")?.optString("content").orEmpty()
-    return messageContent.ifBlank { choice.optString("text") }.trim()
+    val message = choice.optJSONObject("message")
+    val messageContent = message?.optString("content").orEmpty()
+    val toolCalls = message?.optJSONArray("tool_calls")
+    val functionCall = message?.optJSONObject("function_call")
+    val text = choice.optString("text")
+    return buildString {
+        if (messageContent.isNotBlank()) {
+            append(messageContent.trim())
+        } else if (text.isNotBlank()) {
+            append(text.trim())
+        }
+        if (toolCalls != null && toolCalls.length() > 0) {
+            if (isNotBlank()) append("\n")
+            append(JSONObject().put("tool_calls", toolCalls).toString())
+        } else if (functionCall != null) {
+            if (isNotBlank()) append("\n")
+            append(JSONObject().put("tool_calls", JSONArray().put(JSONObject().put("function", functionCall))).toString())
+        }
+    }.trim()
 }

@@ -41,7 +41,8 @@ enum class TodoComplexity {
 enum class ProtatoThemeChoice {
     Mint,
     SeaSalt,
-    Berry
+    Berry,
+    Paper
 }
 
 data class TodoCompletionReview(

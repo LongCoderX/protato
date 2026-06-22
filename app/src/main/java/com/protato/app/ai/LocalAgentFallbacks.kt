@@ -74,10 +74,15 @@ internal fun String.looksLikeTodoQuery(): Boolean {
 internal fun localUnifiedAgentReply(
     input: String,
     state: AppState,
-    nickname: String
+    nickname: String,
+    canReadTodos: Boolean = true
 ): String {
     val today = dayKey(System.currentTimeMillis())
-    val todayTodos = state.todos.filter { it.dueDate == today && !it.completed }
+    val todayTodos = if (canReadTodos) {
+        state.todos.filter { it.dueDate == today && !it.completed }
+    } else {
+        emptyList()
+    }
     val todayRecords = state.records.filter { dayKey(it.endedAt) == today }
     val name = nickname.ifBlank { DEFAULT_NICKNAME }
     return when {
@@ -85,8 +90,11 @@ internal fun localUnifiedAgentReply(
             val minutes = todayRecords.sumOf { it.focusMinutes }
             "$name，今天目前有 ${todayRecords.size} 个番茄、$minutes 分钟专注记录。可以点上面的“生成今日总结”，我会把记录沉淀成一段正式复盘。"
         }
-        input.looksLikeTodoQuery() -> {
+        input.looksLikeTodoQuery() && canReadTodos -> {
             localTodoQueryReply(input, state, nickname)
+        }
+        input.looksLikeTodoQuery() -> {
+            "$name，我没有读取待办的权限。请先在 Agent 设置里开启待办权限。"
         }
         input.looksLikeTodoPlanningRequest() -> {
             val count = parseTodoSuggestions(input).size

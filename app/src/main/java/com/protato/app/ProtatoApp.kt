@@ -21,6 +21,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -112,7 +113,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -313,39 +317,40 @@ fun ProtatoApp() {
                     .padding(padding),
                 color = MaterialTheme.colorScheme.background
             ) {
-                if (secondaryDestination != null) {
-                    when (secondaryDestination) {
-                        SecondaryDestination.Templates -> TemplateScreen(
-                            templates = appState.templates,
-                            selectedTemplateId = appState.selectedTemplateId,
-                            providers = appState.llmProviders,
-                            agents = appState.agents,
-                            nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
-                            onSelectedTemplate = { templateId ->
-                                dispatchEvent(ProtatoEvent.SelectTemplate(templateId))
-                            },
-                            onUpsert = { template ->
-                                dispatchEvent(ProtatoEvent.UpsertTemplate(template))
-                            },
-                            onDelete = { template ->
-                                dispatchEvent(ProtatoEvent.DeleteTemplate(template))
-                            },
-                            onBack = { secondaryDestination = null }
-                        )
+                PaperThemeBackground(enabled = appState.themeChoice == ProtatoThemeChoice.Paper) {
+                    if (secondaryDestination != null) {
+                        when (secondaryDestination) {
+                            SecondaryDestination.Templates -> TemplateScreen(
+                                templates = appState.templates,
+                                selectedTemplateId = appState.selectedTemplateId,
+                                providers = appState.llmProviders,
+                                agents = appState.agents,
+                                nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
+                                onSelectedTemplate = { templateId ->
+                                    dispatchEvent(ProtatoEvent.SelectTemplate(templateId))
+                                },
+                                onUpsert = { template ->
+                                    dispatchEvent(ProtatoEvent.UpsertTemplate(template))
+                                },
+                                onDelete = { template ->
+                                    dispatchEvent(ProtatoEvent.DeleteTemplate(template))
+                                },
+                                onBack = { secondaryDestination = null }
+                            )
 
-                        SecondaryDestination.Settings -> SettingsScreen(
-                            appState = appState,
-                            appVersionName = BuildConfig.VERSION_NAME,
-                            syncing = syncing,
-                            onSync = ::requestSync,
-                            onEvent = ::dispatchEvent,
-                            onBack = { secondaryDestination = null }
-                        )
+                            SecondaryDestination.Settings -> SettingsScreen(
+                                appState = appState,
+                                appVersionName = BuildConfig.VERSION_NAME,
+                                syncing = syncing,
+                                onSync = ::requestSync,
+                                onEvent = ::dispatchEvent,
+                                onBack = { secondaryDestination = null }
+                            )
 
-                        null -> Unit
-                    }
-                } else {
-                    when (currentTab) {
+                            null -> Unit
+                        }
+                    } else {
+                        when (currentTab) {
                         MainTab.Agent -> AgentScreen(
                             appState = appState,
                             input = agentInput,
@@ -497,9 +502,70 @@ fun ProtatoApp() {
                         MainTab.More -> MoreScreen(
                             onOpenSettings = { secondaryDestination = SecondaryDestination.Settings }
                         )
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun PaperThemeBackground(
+    enabled: Boolean,
+    content: @Composable () -> Unit
+) {
+    if (!enabled) {
+        content()
+        return
+    }
+    Box(Modifier.fillMaxSize()) {
+        Canvas(Modifier.fillMaxSize()) {
+            drawRect(
+                brush = Brush.verticalGradient(
+                    colors = listOf(
+                        Color(0xFFFFFEF8),
+                        Color(0xFFF0ECE1)
+                    )
+                )
+            )
+            val gridColor = Color(0xFFB9B2A5).copy(alpha = 0.20f)
+            val grid = 18.dp.toPx()
+            var x = grid
+            while (x < size.width) {
+                drawLine(
+                    color = gridColor,
+                    start = Offset(x, 0f),
+                    end = Offset(x, size.height),
+                    strokeWidth = 0.8.dp.toPx()
+                )
+                x += grid
+            }
+            var y = grid
+            while (y < size.height) {
+                drawLine(
+                    color = gridColor,
+                    start = Offset(0f, y),
+                    end = Offset(size.width, y),
+                    strokeWidth = 0.8.dp.toPx()
+                )
+                y += grid
+            }
+            drawRect(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color.White.copy(alpha = 0.52f),
+                        Color.Transparent
+                    ),
+                    center = Offset(size.width * 0.32f, size.height * 0.12f),
+                    radius = size.minDimension * 0.72f
+                )
+            )
+            drawRect(
+                color = Color(0xFF8EDFC8).copy(alpha = 0.16f),
+                style = Stroke(width = 1.dp.toPx())
+            )
+        }
+        content()
     }
 }

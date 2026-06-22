@@ -55,7 +55,7 @@ fun ProtatoBottomBar(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = MaterialTheme.colorScheme.surface,
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
         shadowElevation = 0.dp,
         tonalElevation = 0.dp,
         shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp)
@@ -65,7 +65,7 @@ fun ProtatoBottomBar(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(72.dp)
-                    .background(MaterialTheme.colorScheme.surface)
+                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.Center
             ) {

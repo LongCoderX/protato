@@ -5,6 +5,8 @@ import com.protato.app.AgentSettings
 import com.protato.app.AppState
 import com.protato.app.DEFAULT_NICKNAME
 import com.protato.app.LlmProviderSettings
+import org.json.JSONArray
+import org.json.JSONObject
 
 internal fun String.withNickname(nickname: String): String {
     return replace("{nickname}", nickname.ifBlank { DEFAULT_NICKNAME })
@@ -56,6 +58,103 @@ internal suspend fun requestUnifiedAgentChat(
     return requestLlmChat(
         provider = provider,
         messages = listOf(LlmChatMessage("system", systemPrompt)) +
-            state.agentMessages.takeLast(16).map { LlmChatMessage(it.role, it.content) }
+            state.agentMessages.takeLast(16).map { LlmChatMessage(it.role, it.content) },
+        tools = protatoAgentTools()
     )
+}
+
+internal fun protatoAgentTools(): List<LlmChatTool> {
+    return listOf(
+        LlmChatTool(
+            name = "propose_todos",
+            description = "提出待办草案，由 App 展示确认/拒绝卡片；用户确认后才会写入 TodoList。",
+            parameters = JSONObject()
+                .put("type", "object")
+                .put(
+                    "properties",
+                    JSONObject().put(
+                        "todos",
+                        JSONObject()
+                            .put("type", "array")
+                            .put("maxItems", 6)
+                            .put(
+                                "items",
+                                JSONObject()
+                                    .put("type", "object")
+                                    .put(
+                                        "properties",
+                                        JSONObject()
+                                            .put("title", JSONObject().put("type", "string"))
+                                            .put("dueDate", nullableStringSchema("yyyy-MM-dd"))
+                                            .put("reminderAt", nullableStringSchema("yyyy-MM-dd HH:mm"))
+                                            .put(
+                                                "tags",
+                                                JSONObject()
+                                                    .put("type", "array")
+                                                    .put("items", JSONObject().put("type", "string"))
+                                            )
+                                            .put("plannedPomodoros", JSONObject().put("type", "integer").put("minimum", 1).put("maximum", 24))
+                                    )
+                                    .put("required", JSONArray(listOf("title")))
+                                    .put("additionalProperties", false)
+                            )
+                    )
+                )
+                .put("required", JSONArray(listOf("todos")))
+                .put("additionalProperties", false)
+        ),
+        LlmChatTool(
+            name = "propose_todo_updates",
+            description = "提出已有未完成待办的编辑草案；用户确认后才会更新 TodoList。",
+            parameters = JSONObject()
+                .put("type", "object")
+                .put(
+                    "properties",
+                    JSONObject().put(
+                        "edits",
+                        JSONObject()
+                            .put("type", "array")
+                            .put("maxItems", 6)
+                            .put(
+                                "items",
+                                JSONObject()
+                                    .put("type", "object")
+                                    .put(
+                                        "properties",
+                                        JSONObject()
+                                            .put("id", JSONObject().put("type", "string"))
+                                            .put("title", JSONObject().put("type", "string"))
+                                            .put("dueDate", nullableStringSchema("yyyy-MM-dd"))
+                                            .put("reminderAt", nullableStringSchema("yyyy-MM-dd HH:mm"))
+                                            .put(
+                                                "tags",
+                                                JSONObject()
+                                                    .put("type", "array")
+                                                    .put("items", JSONObject().put("type", "string"))
+                                            )
+                                            .put("plannedPomodoros", JSONObject().put("type", "integer").put("minimum", 1).put("maximum", 24))
+                                            .put("completed", JSONObject().put("type", "boolean"))
+                                            .put("complexity", JSONObject().put("type", "string").put("enum", JSONArray(listOf("simple", "complex"))))
+                                            .put(
+                                                "subtasks",
+                                                JSONObject()
+                                                    .put("type", "array")
+                                                    .put("items", JSONObject().put("type", "string"))
+                                            )
+                                    )
+                                    .put("required", JSONArray(listOf("id")))
+                                    .put("additionalProperties", false)
+                            )
+                    )
+                )
+                .put("required", JSONArray(listOf("edits")))
+                .put("additionalProperties", false)
+        )
+    )
+}
+
+private fun nullableStringSchema(description: String): JSONObject {
+    return JSONObject()
+        .put("type", JSONArray(listOf("string", "null")))
+        .put("description", description)
 }

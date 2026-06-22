@@ -2,6 +2,7 @@ package com.protato.app.ai
 
 import com.protato.app.AgentSettings
 import com.protato.app.AppState
+import com.protato.app.DEFAULT_NICKNAME
 import com.protato.app.LlmProviderSettings
 import com.protato.app.TodoComplexity
 import com.protato.app.TodoDraft
@@ -39,12 +40,15 @@ internal suspend fun runAgentTurn(
             hasPendingActions = hasPendingActions
         )
     ).intent
+    val canReadTodos = agent?.permissions?.todos != false
     when (intent) {
         is AgentIntent.QueryTodos -> {
+            if (!canReadTodos) return unauthorizedTodoAccessReply(nickname)
             return AgentTurnResult(reply = localTodoQueryReply(text, userState, nickname))
         }
 
         is AgentIntent.MoveOpenTodosToToday -> {
+            if (!canReadTodos) return unauthorizedTodoAccessReply(nickname)
             val today = dayKey(System.currentTimeMillis())
             val edits = userState.todos
                 .filter { !it.completed && it.dueDate != today }
@@ -65,6 +69,7 @@ internal suspend fun runAgentTurn(
         }
 
         is AgentIntent.PlanSubtasks -> {
+            if (!canReadTodos) return unauthorizedTodoAccessReply(nickname)
             val targetTodo = findAgentContextTodo(userState.todos, contextTodoId, intent.targetHint)
             if (targetTodo == null) {
                 return AgentTurnResult(reply = "我还不能确定要拆分哪一个待办。请先在对话页选择一个待办，或在消息里写清楚待办标题。")
@@ -108,17 +113,10 @@ internal suspend fun runAgentTurn(
         is AgentIntent.PlanTodos -> intent.rawGoal
         else -> text
     }
-    val todoDrafts = createTodoDraftsForTurn(
-        text = planningText,
-        shouldCreate = intent is AgentIntent.PlanTodos,
-        userState = userState,
-        agent = agent,
-        provider = provider,
-        nickname = nickname
-    )
     var errorText: String? = null
+    val shouldUseRemoteAgent = agent != null && provider != null && provider.isConfiguredForChat()
     val rawReply = runCatching {
-        if (agent != null && provider != null && provider.isConfiguredForChat()) {
+        if (shouldUseRemoteAgent) {
             requestUnifiedAgentChat(
                 state = userState,
                 agent = agent,
@@ -126,37 +124,57 @@ internal suspend fun runAgentTurn(
                 nickname = nickname
             )
         } else {
-            localUnifiedAgentReply(text, userState, nickname)
+            localUnifiedAgentReply(text, userState, nickname, canReadTodos = canReadTodos)
         }
     }.getOrElse { error ->
         errorText = error.message ?: "发送失败"
-        localUnifiedAgentReply(text, userState, nickname)
+        localUnifiedAgentReply(text, userState, nickname, canReadTodos = canReadTodos)
     }
+    val todoDrafts = if (intent is AgentIntent.PlanTodos && !rawReply.hasAgentTodoToolResults()) {
+        createLocalTodoDraftsForTurn(planningText)
+    } else {
+        emptyList()
+    }
+    return buildAgentTurnResultFromRawReply(
+        rawReply = rawReply,
+        fallbackTodoDrafts = todoDrafts,
+        existingTodos = userState.todos,
+        handledTodoDraftKeys = handledTodoDraftKeys,
+        handledTodoEditKeys = handledTodoEditKeys,
+        errorText = errorText
+    )
+}
+
+private fun unauthorizedTodoAccessReply(nickname: String): AgentTurnResult {
+    val name = nickname.ifBlank { DEFAULT_NICKNAME }
+    return AgentTurnResult(reply = "$name，我没有读取待办的权限。请先在 Agent 设置里开启待办权限。")
+}
+
+internal fun buildAgentTurnResultFromRawReply(
+    rawReply: String,
+    fallbackTodoDrafts: List<TodoDraft>,
+    existingTodos: List<TodoItem>,
+    handledTodoDraftKeys: Set<String>,
+    handledTodoEditKeys: Set<String>,
+    errorText: String? = null
+): AgentTurnResult {
     val toolResponse = parseAgentToolResponse(rawReply)
-    val parsedTodoDrafts = if (intent is AgentIntent.PlanTodos) {
-        toolResponse.todoDrafts
-    } else {
-        emptyList()
-    }
-    val parsedTodoEdits = if (intent is AgentIntent.UpdateTodo) {
-        toolResponse.todoEdits
-    } else {
-        emptyList()
-    }
+    val parsedTodoDrafts = toolResponse.todoDrafts
+    val parsedTodoEdits = toolResponse.todoEdits
     val finalTodoDrafts = parsedTodoDrafts
-        .ifEmpty { todoDrafts }
+        .ifEmpty { fallbackTodoDrafts }
         .filterNewTodoDrafts(
-            existingTodos = userState.todos,
+            existingTodos = existingTodos,
             handledKeys = handledTodoDraftKeys
         )
     val finalTodoEdits = parsedTodoEdits.filterNewTodoEdits(
-        existingTodos = userState.todos,
+        existingTodos = existingTodos,
         handledKeys = handledTodoEditKeys
     )
     val reply = if (
         (
             parsedTodoDrafts.isNotEmpty() ||
-                todoDrafts.isNotEmpty() ||
+                fallbackTodoDrafts.isNotEmpty() ||
                 parsedTodoEdits.isNotEmpty()
             ) &&
         finalTodoDrafts.isEmpty() &&
@@ -217,29 +235,11 @@ private fun defaultSubtasksFor(todo: TodoItem): List<TodoSubtask> {
     ).map { TodoSubtask(id = newId(), title = it.take(60)) }
 }
 
-private suspend fun createTodoDraftsForTurn(
-    text: String,
-    shouldCreate: Boolean,
-    userState: AppState,
-    agent: AgentSettings?,
-    provider: LlmProviderSettings?,
-    nickname: String
-): List<TodoDraft> {
-    if (!shouldCreate) return emptyList()
-    return runCatching {
-        if (agent != null && provider != null && provider.isConfiguredForChat()) {
-            generateAgentTodoDrafts(
-                rawInput = text,
-                state = userState,
-                agent = agent,
-                provider = provider,
-                nickname = nickname,
-                planningMode = true
-            )
-        } else {
-            localPlanTodoDrafts(text)
-        }
-    }.getOrElse {
-        localPlanTodoDrafts(text)
-    }
+private fun String.hasAgentTodoToolResults(): Boolean {
+    val toolResponse = parseAgentToolResponse(this)
+    return toolResponse.todoDrafts.isNotEmpty() || toolResponse.todoEdits.isNotEmpty()
+}
+
+private fun createLocalTodoDraftsForTurn(text: String): List<TodoDraft> {
+    return localPlanTodoDrafts(text)
 }

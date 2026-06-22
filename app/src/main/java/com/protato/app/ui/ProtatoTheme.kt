@@ -159,4 +159,30 @@ private fun protatoColorScheme(themeChoice: ProtatoThemeChoice) = when (themeCho
         errorContainer = Color(0xFFFEE4E2),
         onErrorContainer = Color(0xFF7A271A)
     )
+
+    ProtatoThemeChoice.Paper -> lightColorScheme(
+        primary = Color(0xFF8EDFC8),
+        onPrimary = Color(0xFF163B32),
+        primaryContainer = Color(0xFFD8F8EC),
+        onPrimaryContainer = Color(0xFF153A32),
+        secondary = Color(0xFF9C9A8F),
+        onSecondary = Color.White,
+        secondaryContainer = Color(0xFFE9E6DC),
+        onSecondaryContainer = Color(0xFF403E36),
+        tertiary = Color(0xFF2F2D2A),
+        onTertiary = Color.White,
+        tertiaryContainer = Color(0xFFE7E3D7),
+        onTertiaryContainer = Color(0xFF24221F),
+        background = Color(0xFFF4F1E9),
+        onBackground = Color(0xFF2B2925),
+        surface = Color(0xFFFFFEF8),
+        onSurface = Color(0xFF2B2925),
+        surfaceVariant = Color(0xFFE8E5DC),
+        onSurfaceVariant = Color(0xFF615E56),
+        outline = Color(0xFFC9C4B8),
+        outlineVariant = Color(0xFFE1DDD2),
+        error = Color(0xFFB42318),
+        errorContainer = Color(0xFFF6C8C3),
+        onErrorContainer = Color(0xFF7A271A)
+    )
 }

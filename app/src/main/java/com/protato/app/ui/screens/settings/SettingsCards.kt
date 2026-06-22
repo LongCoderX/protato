@@ -303,6 +303,11 @@ private fun ThemeOption(
             Color(0xFFB45309),
             Color(0xFFF3E2E5)
         )
+        ProtatoThemeChoice.Paper -> "纸感" to listOf(
+            Color(0xFF8EDFC8),
+            Color(0xFFFFFEF8),
+            Color(0xFFE8E5DC)
+        )
     }
     val background = if (selected) {
         MaterialTheme.colorScheme.primaryContainer

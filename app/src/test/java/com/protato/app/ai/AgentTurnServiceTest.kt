@@ -1,7 +1,11 @@
 package com.protato.app.ai
 
+import com.protato.app.AgentDataPermissions
+import com.protato.app.AgentSettings
 import com.protato.app.AppState
 import com.protato.app.AgentConversationMessage
+import com.protato.app.TodoDraft
+import com.protato.app.todoDraftKey
 import com.protato.app.TodoItem
 import com.protato.app.util.dayKey
 import kotlinx.coroutines.runBlocking
@@ -10,6 +14,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentTurnServiceTest {
+    private val agentWithoutTodoPermission = AgentSettings(
+        id = "agent-test",
+        permissions = AgentDataPermissions(todos = false)
+    )
+
     @Test
     fun returnsLocalTodoDraftsWhenProviderIsUnavailable() = runBlocking {
         val result = runAgentTurn(
@@ -124,6 +133,29 @@ class AgentTurnServiceTest {
     }
 
     @Test
+    fun todoQueryRequiresTodoPermission() = runBlocking {
+        val today = dayKey(System.currentTimeMillis())
+        val result = runAgentTurn(
+            text = "今天有什么任务？",
+            userState = AppState(
+                todos = listOf(TodoItem(id = "todo-1", title = "写测试", dueDate = today)),
+                agentMessages = emptyList()
+            ),
+            agent = agentWithoutTodoPermission,
+            provider = null,
+            nickname = "测试用户",
+            handledTodoDraftKeys = emptySet(),
+            handledTodoEditKeys = emptySet()
+        )
+
+        assertTrue(result.reply.contains("没有读取待办的权限"))
+        assertTrue(result.reply.contains("Agent 设置"))
+        assertTrue(!result.reply.contains("写测试"))
+        assertTrue(result.todoDrafts.isEmpty())
+        assertTrue(result.todoEdits.isEmpty())
+    }
+
+    @Test
     fun weakTaskQuestionDoesNotCreateConfirmationCards() = runBlocking {
         val today = dayKey(System.currentTimeMillis())
         val result = runAgentTurn(
@@ -194,6 +226,27 @@ class AgentTurnServiceTest {
     }
 
     @Test
+    fun movingOpenTodosToTodayRequiresTodoPermission() = runBlocking {
+        val result = runAgentTurn(
+            text = "把未完成任务都挪到今天",
+            userState = AppState(
+                todos = listOf(TodoItem(id = "todo-1", title = "无日期任务", dueDate = null)),
+                agentMessages = emptyList()
+            ),
+            agent = agentWithoutTodoPermission,
+            provider = null,
+            nickname = "测试用户",
+            handledTodoDraftKeys = emptySet(),
+            handledTodoEditKeys = emptySet()
+        )
+
+        assertTrue(result.reply.contains("没有读取待办的权限"))
+        assertTrue(!result.reply.contains("无日期任务"))
+        assertTrue(result.todoDrafts.isEmpty())
+        assertTrue(result.todoEdits.isEmpty())
+    }
+
+    @Test
     fun selectedContextTodoCanBePlannedIntoSubtasks() = runBlocking {
         val result = runAgentTurn(
             text = "把当前任务拆分成子任务",
@@ -216,6 +269,28 @@ class AgentTurnServiceTest {
     }
 
     @Test
+    fun planningSubtasksRequiresTodoPermission() = runBlocking {
+        val result = runAgentTurn(
+            text = "把当前任务拆分成子任务",
+            userState = AppState(
+                todos = listOf(TodoItem(id = "todo-1", title = "完成Protato优化")),
+                agentMessages = emptyList()
+            ),
+            agent = agentWithoutTodoPermission,
+            provider = null,
+            nickname = "测试用户",
+            handledTodoDraftKeys = emptySet(),
+            handledTodoEditKeys = emptySet(),
+            contextTodoId = "todo-1"
+        )
+
+        assertTrue(result.reply.contains("没有读取待办的权限"))
+        assertTrue(!result.reply.contains("完成Protato优化"))
+        assertTrue(result.todoDrafts.isEmpty())
+        assertTrue(result.todoEdits.isEmpty())
+    }
+
+    @Test
     fun pendingConfirmationDoesNotCreateNewDrafts() = runBlocking {
         val result = runAgentTurn(
             text = "可以，就这样",
@@ -229,6 +304,48 @@ class AgentTurnServiceTest {
         )
 
         assertTrue(result.reply.contains("确认按钮"))
+        assertTrue(result.todoDrafts.isEmpty())
+        assertTrue(result.todoEdits.isEmpty())
+    }
+
+    @Test
+    fun nativeToolCallCreatesPendingTodoDraftsEvenWithoutLocalPlanningIntent() {
+        val result = buildAgentTurnResultFromRawReply(
+            rawReply = """
+                我整理了草案，请确认。
+                {"tool_calls":[{"function":{"name":"propose_todos","arguments":"{\"todos\":[{\"title\":\"整理AI工具调用链路\",\"plannedPomodoros\":2,\"tags\":[\"开发\"]}]}"}}]}
+            """.trimIndent(),
+            fallbackTodoDrafts = emptyList(),
+            existingTodos = emptyList(),
+            handledTodoDraftKeys = emptySet(),
+            handledTodoEditKeys = emptySet()
+        )
+
+        assertEquals("我整理了草案，请确认。", result.reply)
+        assertEquals("整理AI工具调用链路", result.todoDrafts.single().title)
+        assertEquals(2, result.todoDrafts.single().plannedPomodoros)
+        assertTrue(result.todoEdits.isEmpty())
+    }
+
+    @Test
+    fun handledNativeToolCallDoesNotCreateDuplicatePendingCards() {
+        val draft = TodoDraft(
+            title = "整理AI工具调用链路",
+            tags = listOf("开发"),
+            plannedPomodoros = 2
+        )
+        val result = buildAgentTurnResultFromRawReply(
+            rawReply = """
+                我整理了草案，请确认。
+                {"tool_calls":[{"function":{"name":"propose_todos","arguments":"{\"todos\":[{\"title\":\"整理AI工具调用链路\",\"plannedPomodoros\":2,\"tags\":[\"开发\"]}]}"}}]}
+            """.trimIndent(),
+            fallbackTodoDrafts = emptyList(),
+            existingTodos = emptyList(),
+            handledTodoDraftKeys = setOf(todoDraftKey(draft)),
+            handledTodoEditKeys = emptySet()
+        )
+
+        assertTrue(result.reply.contains("不会重复提交"))
         assertTrue(result.todoDrafts.isEmpty())
         assertTrue(result.todoEdits.isEmpty())
     }
