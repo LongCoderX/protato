@@ -1,5 +1,7 @@
 package com.protato.app.ui.screens.todo
 
+import com.protato.app.domain.todo.*
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable

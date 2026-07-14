@@ -4,11 +4,17 @@ import com.protato.app.AppState
 import com.protato.app.PomodoroRecord
 import com.protato.app.TimerMode
 import com.protato.app.defaultTemplate
+import com.protato.app.domain.timer.completeTimer
+import com.protato.app.domain.timer.pauseTimer
+import com.protato.app.domain.timer.resetTimer
+import com.protato.app.domain.timer.resumeTimer
+import com.protato.app.domain.timer.startTimer
 import com.protato.app.util.newId
 
 internal fun reduceTimerEvent(
     state: AppState,
-    event: TimerProtatoEvent
+    event: TimerProtatoEvent,
+    nowMillis: Long
 ): StateReduction {
     return when (event) {
         is ProtatoEvent.UpdateTimerDuration -> {
@@ -24,13 +30,24 @@ internal fun reduceTimerEvent(
             )
         }
 
-        is ProtatoEvent.SetActiveSession -> {
+        is ProtatoEvent.StartTimer -> {
+            val nextState = startTimer(
+                state = state,
+                mode = event.mode,
+                todoId = event.todoId,
+                todoTitle = event.todoTitle,
+                totalSeconds = event.totalSeconds,
+                templateId = event.templateId,
+                nowMillis = nowMillis
+            )
+            val session = nextState.activeSession
+            if (nextState == state || session == null) return StateReduction(state)
             StateReduction(
-                state = state.copy(activeSession = event.session),
+                state = nextState,
                 result = ProtatoEventResult(
                     effects = listOf(
-                        ProtatoEffect.StartTimerService,
-                        ProtatoEffect.ScheduleTimerAlarm(event.session)
+                        ProtatoEffect.StartTimerService(session),
+                        ProtatoEffect.ScheduleTimerAlarm(session)
                     )
                 )
             )
@@ -38,25 +55,27 @@ internal fun reduceTimerEvent(
 
         is ProtatoEvent.UpdateActiveSessionTodo -> {
             val session = state.activeSession ?: return StateReduction(state)
+            val updatedSession = session.copy(
+                todoId = event.todoId,
+                todoTitle = event.todoTitle.ifBlank { "未绑定任务" }
+            )
             StateReduction(
-                state.copy(
-                    activeSession = session.copy(
-                        todoId = event.todoId,
-                        todoTitle = event.todoTitle.ifBlank { "未绑定任务" }
-                    )
+                state = state.copy(activeSession = updatedSession),
+                result = ProtatoEventResult(
+                    effects = if (updatedSession.pausedRemainingSeconds == null) {
+                        listOf(ProtatoEffect.StartTimerService(updatedSession))
+                    } else {
+                        emptyList()
+                    }
                 )
             )
         }
 
-        is ProtatoEvent.PauseActiveSession -> {
-            val session = state.activeSession
-                ?: return StateReduction(state)
+        ProtatoEvent.PauseTimer -> {
+            val nextState = pauseTimer(state, nowMillis)
+            if (nextState == state) return StateReduction(state)
             StateReduction(
-                state = state.copy(
-                    activeSession = session.copy(
-                        pausedRemainingSeconds = event.remainingSeconds
-                    )
-                ),
+                state = nextState,
                 result = ProtatoEventResult(
                     effects = listOf(
                         ProtatoEffect.StopTimerService,
@@ -66,13 +85,45 @@ internal fun reduceTimerEvent(
             )
         }
 
-        ProtatoEvent.ClearActiveSession -> {
+        ProtatoEvent.ResumeTimer -> {
+            val nextState = resumeTimer(state, nowMillis)
+            val session = nextState.activeSession
+            if (nextState == state || session == null) return StateReduction(state)
             StateReduction(
-                state = state.copy(activeSession = null),
+                state = nextState,
+                result = ProtatoEventResult(
+                    effects = listOf(
+                        ProtatoEffect.StartTimerService(session),
+                        ProtatoEffect.ScheduleTimerAlarm(session)
+                    )
+                )
+            )
+        }
+
+        ProtatoEvent.ResetTimer -> {
+            val nextState = resetTimer(state)
+            if (nextState == state) return StateReduction(state)
+            StateReduction(
+                state = nextState,
                 result = ProtatoEventResult(
                     effects = listOf(
                         ProtatoEffect.StopTimerService,
                         ProtatoEffect.CancelTimerAlarm
+                    )
+                )
+            )
+        }
+
+        ProtatoEvent.CompleteTimer -> {
+            val nextState = completeTimer(state, nowMillis)
+            if (nextState == state) return StateReduction(state)
+            StateReduction(
+                state = nextState,
+                result = ProtatoEventResult(
+                    effects = listOf(
+                        ProtatoEffect.StopTimerService,
+                        ProtatoEffect.CancelTimerAlarm,
+                        ProtatoEffect.CancelTimerNotification
                     )
                 )
             )

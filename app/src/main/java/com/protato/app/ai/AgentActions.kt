@@ -1,7 +1,7 @@
 package com.protato.app.ai
 
-import com.protato.app.TodoDraft
-import com.protato.app.TodoEditDraft
+import com.protato.app.domain.todo.TodoDraft
+import com.protato.app.domain.todo.TodoEditDraft
 
 internal sealed interface AgentAction {
     data class Reply(val text: String) : AgentAction

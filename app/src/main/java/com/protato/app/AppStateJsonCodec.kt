@@ -42,8 +42,11 @@ internal object AppStateJsonCodec {
                 ?.ifEmpty { defaultAgentConversation() }
                 ?: defaultAgentConversation(),
             agentMemory = root.optString("agentMemory"),
-            webDevSync = root.optJSONObject("webDevSync")?.toWebDevSyncSettings()
-                ?: WebDevSyncSettings(),
+            webDavBackup = (
+                root.optJSONObject("webDavBackup")
+                    ?: root.optJSONObject("webDevSync")
+                )?.toWebDavBackupSettings()
+                ?: WebDavBackupSettings(),
             recordPolishProviderId = root.optString("recordPolishProviderId"),
             fontScale = root.optDouble("fontScale", 1.0).toFloat().coerceIn(0.85f, 1.3f),
             themeChoice = root.optString("themeChoice").toProtatoThemeChoice()
@@ -52,6 +55,7 @@ internal object AppStateJsonCodec {
 
     fun encode(state: AppState): String {
         return JSONObject()
+            .put("schemaVersion", CURRENT_APP_STATE_SCHEMA_VERSION)
             .put("todos", state.todos.toJsonArray { it.toJson() })
             .put("templates", state.templates.toJsonArray { it.toJson() })
             .put("records", state.records.toJsonArray { it.toJson() })
@@ -67,7 +71,7 @@ internal object AppStateJsonCodec {
             .put("agents", state.agents.toJsonArray { it.toJson() })
             .put("agentMessages", state.agentMessages.toJsonArray { it.toJson() })
             .put("agentMemory", state.agentMemory)
-            .put("webDevSync", state.webDevSync.toJson())
+            .put("webDavBackup", state.webDavBackup.toJson())
             .put("recordPolishProviderId", state.recordPolishProviderId)
             .put("fontScale", state.fontScale.toDouble())
             .put("themeChoice", state.themeChoice.name)
@@ -275,8 +279,8 @@ private fun JSONObject.toAgentDataPermissions(): AgentDataPermissions {
     )
 }
 
-private fun JSONObject.toWebDevSyncSettings(): WebDevSyncSettings {
-    return WebDevSyncSettings(
+private fun JSONObject.toWebDavBackupSettings(): WebDavBackupSettings {
+    return WebDavBackupSettings(
         enabled = optBoolean("enabled"),
         endpoint = JIANGUOYUN_WEBDAV_BASE_URL,
         username = optString("username"),
@@ -401,7 +405,7 @@ private fun AgentDataPermissions.toJson(): JSONObject = JSONObject()
     .put("todos", todos)
     .put("templates", templates)
 
-private fun WebDevSyncSettings.toJson(): JSONObject = JSONObject()
+private fun WebDavBackupSettings.toJson(): JSONObject = JSONObject()
     .put("enabled", enabled)
     .put("endpoint", JIANGUOYUN_WEBDAV_BASE_URL)
     .put("username", username)

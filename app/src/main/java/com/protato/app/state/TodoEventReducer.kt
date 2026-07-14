@@ -5,7 +5,8 @@ import com.protato.app.util.dayKey
 
 internal fun reduceTodoEvent(
     state: AppState,
-    event: TodoProtatoEvent
+    event: TodoProtatoEvent,
+    nowMillis: Long
 ): StateReduction {
     return when (event) {
         is ProtatoEvent.AddTodo -> {
@@ -24,7 +25,7 @@ internal fun reduceTodoEvent(
 
         is ProtatoEvent.ToggleTodo -> {
             val nextCompleted = !event.todo.completed
-            val today = dayKey(System.currentTimeMillis())
+            val today = dayKey(nowMillis)
             StateReduction(
                 state = state.copy(
                     todos = state.todos.map { todo ->
@@ -57,7 +58,7 @@ internal fun reduceTodoEvent(
         }
 
         is ProtatoEvent.CompleteTodoWithReview -> {
-            val today = dayKey(System.currentTimeMillis())
+            val today = dayKey(nowMillis)
             StateReduction(
                 state = state.copy(
                     todos = state.todos.map { todo ->
@@ -108,7 +109,7 @@ internal fun reduceTodoEvent(
         }
 
         is ProtatoEvent.MoveTodosToToday -> {
-            val today = dayKey(System.currentTimeMillis())
+            val today = dayKey(nowMillis)
             StateReduction(
                 state.copy(
                     todos = state.todos.map { todo ->

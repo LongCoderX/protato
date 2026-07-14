@@ -1,4 +1,11 @@
 package com.protato.app
+import com.protato.app.ui.screens.todo.TodoScreen
+import com.protato.app.ui.screens.templates.TemplateScreen
+import com.protato.app.ui.screens.settings.SettingsScreen
+import com.protato.app.ui.screens.records.RecordsScreen
+import com.protato.app.ui.screens.focus.FocusScreen
+import com.protato.app.ui.screens.agent.AgentScreen
+
 
 import com.protato.app.domain.timer.*
 import com.protato.app.platform.*
@@ -7,104 +14,22 @@ import com.protato.app.state.ProtatoEffect
 import com.protato.app.state.ProtatoEvent
 import com.protato.app.state.ProtatoEventResult
 import com.protato.app.util.*
-import com.protato.app.sync.syncWebDevState
-import android.Manifest
-import android.content.Context
-import android.content.pm.PackageManager
-import android.media.AudioManager
-import android.media.ToneGenerator
-import android.os.Build
-import android.os.Bundle
-import android.util.Log
+import com.protato.app.sync.WebDavBackupController
+import com.protato.app.state.ProtatoAppLifecycle
+import com.protato.app.ui.PaperThemeBackground
 import android.widget.Toast
-import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.Chat
-import androidx.compose.material.icons.automirrored.outlined.Label
-import androidx.compose.material.icons.automirrored.outlined.List
-import androidx.compose.material.icons.automirrored.outlined.Send
-import androidx.compose.material.icons.automirrored.outlined.ViewList
-import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.Check
-import androidx.compose.material.icons.outlined.CloudUpload
-import androidx.compose.material.icons.outlined.Close
-import androidx.compose.material.icons.outlined.DateRange
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.KeyboardArrowDown
-import androidx.compose.material.icons.outlined.KeyboardArrowUp
-import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.RestartAlt
-import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Stop
-import androidx.compose.material.icons.outlined.Timer
-import androidx.compose.material.icons.outlined.WorkHistory
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.Button
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.DatePicker
-import androidx.compose.material3.DatePickerDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.rememberDatePickerState
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -112,84 +37,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import androidx.core.content.ContextCompat
-import com.protato.app.ai.LlmChatMessage
 import com.protato.app.ai.AgentSessionState
-import com.protato.app.ai.fetchLlmModels
-import com.protato.app.ai.requestLlmChat
+import com.protato.app.ai.AgentTurnController
 import com.protato.app.ui.MainTab
 import com.protato.app.ui.ProtatoBottomBar
 import com.protato.app.ui.ProtatoTheme
 import com.protato.app.ui.SecondaryDestination
-import com.protato.app.ui.components.CelebrationCanvas
-import com.protato.app.ui.components.ChatBubble
-import com.protato.app.ui.components.EmptyState
-import com.protato.app.ui.components.Header
-import com.protato.app.ui.components.SecondaryHeader
-import com.protato.app.ui.components.SettingActionRow
-import com.protato.app.ui.components.TodoDateChip
-import com.protato.app.ui.components.TodoPomodoroChip
-import com.protato.app.ui.components.TodoReminderChip
-import com.protato.app.ui.components.TodoTagChip
 import com.protato.app.ui.screens.more.MoreScreen
-import com.protato.app.ui.screens.records.DailySummaryDialog
-import com.protato.app.ui.screens.records.DailySummaryCard
-import com.protato.app.ui.screens.records.DaySwitcher
-import com.protato.app.ui.screens.records.RecordAnswerFields
-import com.protato.app.ui.screens.records.RecordDayOption
-import com.protato.app.ui.screens.records.RecordTodoSelector
-import com.protato.app.ui.screens.focus.DurationEditDialog
-import com.protato.app.ui.screens.focus.TimerRing
-import com.protato.app.ui.screens.records.RecordTodoChip
-import com.protato.app.ui.screens.records.TimelineRecordItem
-import com.protato.app.ui.screens.settings.FontScaleSettingsCard
-import com.protato.app.ui.screens.settings.LlmProviderListCard
-import com.protato.app.ui.screens.settings.NicknameSettingsCard
-import com.protato.app.ui.screens.settings.ProjectVersionCard
-import com.protato.app.ui.screens.settings.RecordPolishProviderCard
-import com.protato.app.ui.screens.settings.WebDevSyncSettingsCard
-import com.protato.app.ui.screens.templates.TemplateCard
-import com.protato.app.ui.screens.templates.TemplateAiDialog
-import com.protato.app.ui.screens.templates.TemplateEditorDialog
-import com.protato.app.ui.screens.todo.TodoChoiceLabel
-import com.protato.app.ui.screens.todo.TodoDraftMetadataRow
-import com.protato.app.ui.screens.todo.TodoExpandedDetails
-import com.protato.app.ui.screens.todo.TodoMetadataStrip
-import com.protato.app.ui.screens.todo.TodoSectionHeader
-import com.protato.app.ui.screens.todo.TodoSelectionBar
-import com.protato.app.ui.screens.todo.TodoSwipeBackground
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
-import java.text.ParseException
-import java.text.SimpleDateFormat
-import java.util.Base64
-import java.util.Date
-import java.util.Locale
-import java.util.TimeZone
-import java.util.UUID
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
 
 @Composable
 fun ProtatoApp() {
@@ -201,11 +56,12 @@ fun ProtatoApp() {
     var selectedTodoId by rememberSaveable { mutableStateOf<String?>(null) }
     var timerMode by rememberSaveable { mutableStateOf(TimerMode.Focus) }
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
-    var syncing by rememberSaveable { mutableStateOf(false) }
     var agentInput by rememberSaveable { mutableStateOf("") }
-    var agentLoading by rememberSaveable { mutableStateOf(false) }
     var agentErrorText by rememberSaveable { mutableStateOf<String?>(null) }
     var agentSessionState by remember { mutableStateOf(AgentSessionState()) }
+    val agentTurnController = remember(scope) { AgentTurnController(scope) }
+    val backupController = remember(scope) { WebDavBackupController(scope) }
+    val backingUp = backupController.backingUp
 
     val todayKey = dayKey(System.currentTimeMillis())
     val selectedTodo = appState.todos.firstOrNull {
@@ -238,60 +94,38 @@ fun ProtatoApp() {
         handleEventResult(stateHolder.dispatch(event))
     }
 
-    fun requestSync() {
-        if (syncing) return
-        val stateSnapshot = appState
-        scope.launch {
-            syncing = true
-            val message = runCatching {
-                syncWebDevState(stateSnapshot)
-                "同步完成"
-            }.getOrElse { error ->
-                error.message ?: "同步失败"
+    fun requestBackup() = backupController.upload(appState) { message ->
+        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+    }
+
+    ProtatoAppLifecycle(
+        stateHolder = stateHolder,
+        appState = appState,
+        activeSession = activeSession,
+        isRunning = isRunning,
+        effectRunner = effectRunner,
+        onTimerModeChange = { timerMode = it },
+        onNowMillisChange = { nowMillis = it },
+        onTimerComplete = { dispatchEvent(ProtatoEvent.CompleteTimer) }
+    )
+
+    if (!stateHolder.isLoaded) {
+        ProtatoTheme(
+            fontScale = appState.fontScale,
+            themeChoice = appState.themeChoice
+        ) {
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
             }
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-            syncing = false
         }
+        return
     }
 
-    LaunchedEffect(appState) {
-        stateHolder.saveCurrentState()
-    }
-
-    LaunchedEffect(activeSession?.mode) {
-        activeSession?.let { timerMode = it.mode }
-    }
-
-    LaunchedEffect(activeSession?.endsAt, activeSession?.pausedRemainingSeconds) {
-        if (activeSession != null && isRunning) {
-            effectRunner.runAll(
-                listOf(
-                    ProtatoEffect.StartTimerService,
-                    ProtatoEffect.ScheduleTimerAlarm(activeSession)
-                )
-            )
-        }
-    }
-
-    LaunchedEffect(activeSession?.endsAt, activeSession?.pausedRemainingSeconds) {
-        while (activeSession != null && isRunning) {
-            nowMillis = System.currentTimeMillis()
-            if (activeSession.remainingSeconds(nowMillis) <= 0) {
-                val nextState = completeSession(appState)
-                stateHolder.setState(nextState)
-                stateHolder.saveCurrentState()
-                effectRunner.runAll(
-                    listOf(
-                        ProtatoEffect.CancelTimerNotification,
-                        ProtatoEffect.CancelTimerAlarm,
-                        ProtatoEffect.StopTimerService
-                    )
-                )
-                break
-            }
-            delay(1000)
-        }
-    }
 
     ProtatoTheme(
         fontScale = appState.fontScale,
@@ -341,8 +175,8 @@ fun ProtatoApp() {
                             SecondaryDestination.Settings -> SettingsScreen(
                                 appState = appState,
                                 appVersionName = BuildConfig.VERSION_NAME,
-                                syncing = syncing,
-                                onSync = ::requestSync,
+                                backingUp = backingUp,
+                                onBackup = ::requestBackup,
                                 onEvent = ::dispatchEvent,
                                 onBack = { secondaryDestination = null }
                             )
@@ -354,13 +188,11 @@ fun ProtatoApp() {
                         MainTab.Agent -> AgentScreen(
                             appState = appState,
                             input = agentInput,
-                            loading = agentLoading,
                             errorText = agentErrorText,
                             sessionState = agentSessionState,
-                            turnScope = scope,
+                            turnController = agentTurnController,
                             contextTodoId = selectedTodoId,
                             onInputChange = { agentInput = it },
-                            onLoadingChange = { agentLoading = it },
                             onErrorTextChange = { agentErrorText = it },
                             onSessionStateChange = { agentSessionState = it },
                             onContextTodoIdChange = { selectedTodoId = it },
@@ -395,42 +227,29 @@ fun ProtatoApp() {
                             },
                             onModeChange = { mode ->
                                 timerMode = mode
-                                dispatchEvent(ProtatoEvent.ClearActiveSession)
+                                dispatchEvent(ProtatoEvent.ResetTimer)
                             },
                             onStartPause = {
                                 if (isRunning) {
-                                    activeSession?.let { session ->
-                                        dispatchEvent(
-                                            ProtatoEvent.PauseActiveSession(
-                                                remainingSeconds = session.remainingSeconds(nowMillis)
-                                            )
-                                        )
-                                    }
+                                    dispatchEvent(ProtatoEvent.PauseTimer)
+                                } else if (hasPausedSession) {
+                                    dispatchEvent(ProtatoEvent.ResumeTimer)
                                 } else {
                                     val startedAt = System.currentTimeMillis()
-                                    val session = activeSession?.let { pausedSession ->
-                                        pausedSession.pausedRemainingSeconds?.let { pausedSeconds ->
-                                            pausedSession.copy(
-                                                endsAt = startedAt + pausedSeconds * 1000L,
-                                                pausedRemainingSeconds = null
-                                            )
-                                        }
-                                    } ?: TimerSession(
-                                        mode = timerMode,
-                                        todoId = selectedTodo?.id,
-                                        todoTitle = selectedTodo?.title ?: "未绑定任务",
-                                        startedAt = startedAt,
-                                        endsAt = startedAt + totalSeconds * 1000L,
-                                        totalSeconds = totalSeconds,
-                                        templateId = selectedTemplate.id
+                                    dispatchEvent(
+                                        ProtatoEvent.StartTimer(
+                                            mode = timerMode,
+                                            todoId = selectedTodo?.id,
+                                            todoTitle = selectedTodo?.title ?: "未绑定任务",
+                                            totalSeconds = totalSeconds,
+                                            templateId = selectedTemplate.id
+                                        )
                                     )
-                                    handleEventResult(stateHolder.dispatch(ProtatoEvent.SetActiveSession(session)))
-                                    stateHolder.saveCurrentState()
                                     nowMillis = startedAt
                                 }
                             },
                             onReset = {
-                                dispatchEvent(ProtatoEvent.ClearActiveSession)
+                                dispatchEvent(ProtatoEvent.ResetTimer)
                             },
                             onDismissRecord = {
                                 dispatchEvent(ProtatoEvent.ClearPendingRecord)
@@ -507,65 +326,5 @@ fun ProtatoApp() {
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun PaperThemeBackground(
-    enabled: Boolean,
-    content: @Composable () -> Unit
-) {
-    if (!enabled) {
-        content()
-        return
-    }
-    Box(Modifier.fillMaxSize()) {
-        Canvas(Modifier.fillMaxSize()) {
-            drawRect(
-                brush = Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFFFFFEF8),
-                        Color(0xFFF0ECE1)
-                    )
-                )
-            )
-            val gridColor = Color(0xFFB9B2A5).copy(alpha = 0.20f)
-            val grid = 18.dp.toPx()
-            var x = grid
-            while (x < size.width) {
-                drawLine(
-                    color = gridColor,
-                    start = Offset(x, 0f),
-                    end = Offset(x, size.height),
-                    strokeWidth = 0.8.dp.toPx()
-                )
-                x += grid
-            }
-            var y = grid
-            while (y < size.height) {
-                drawLine(
-                    color = gridColor,
-                    start = Offset(0f, y),
-                    end = Offset(size.width, y),
-                    strokeWidth = 0.8.dp.toPx()
-                )
-                y += grid
-            }
-            drawRect(
-                brush = Brush.radialGradient(
-                    colors = listOf(
-                        Color.White.copy(alpha = 0.52f),
-                        Color.Transparent
-                    ),
-                    center = Offset(size.width * 0.32f, size.height * 0.12f),
-                    radius = size.minDimension * 0.72f
-                )
-            )
-            drawRect(
-                color = Color(0xFF8EDFC8).copy(alpha = 0.16f),
-                style = Stroke(width = 1.dp.toPx())
-            )
-        }
-        content()
     }
 }

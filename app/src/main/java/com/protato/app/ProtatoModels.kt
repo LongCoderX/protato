@@ -126,7 +126,7 @@ data class LlmImportSettings(
     val apiKey: String = ""
 )
 
-data class WebDevSyncSettings(
+data class WebDavBackupSettings(
     val enabled: Boolean = false,
     val endpoint: String = JIANGUOYUN_WEBDAV_BASE_URL,
     val username: String = "",
@@ -180,7 +180,7 @@ data class AppState(
     val agents: List<AgentSettings> = defaultAgents(),
     val agentMessages: List<AgentConversationMessage> = defaultAgentConversation(),
     val agentMemory: String = "",
-    val webDevSync: WebDevSyncSettings = WebDevSyncSettings(),
+    val webDavBackup: WebDavBackupSettings = WebDavBackupSettings(),
     val recordPolishProviderId: String = "",
     val fontScale: Float = 1.0f,
     val themeChoice: ProtatoThemeChoice = ProtatoThemeChoice.Mint
@@ -197,8 +197,8 @@ const val JIANGUOYUN_WEBDAV_PROVIDER = "jianguoyun"
 const val JIANGUOYUN_WEBDAV_BASE_URL = "https://dav.jianguoyun.com/dav/"
 const val JIANGUOYUN_WEBDAV_FOLDER_NAME = "Protato"
 const val JIANGUOYUN_WEBDAV_FOLDER_URL = JIANGUOYUN_WEBDAV_BASE_URL + JIANGUOYUN_WEBDAV_FOLDER_NAME + "/"
-const val JIANGUOYUN_WEBDAV_SYNC_FILE_NAME = "protato-sync.json"
-const val JIANGUOYUN_WEBDAV_SYNC_FILE_URL = JIANGUOYUN_WEBDAV_FOLDER_URL + JIANGUOYUN_WEBDAV_SYNC_FILE_NAME
+const val JIANGUOYUN_WEBDAV_BACKUP_FILE_NAME = "protato-backup.json"
+const val JIANGUOYUN_WEBDAV_BACKUP_FILE_URL = JIANGUOYUN_WEBDAV_FOLDER_URL + JIANGUOYUN_WEBDAV_BACKUP_FILE_NAME
 
 fun defaultLlmProviders(): List<LlmProviderSettings> {
     return listOf(

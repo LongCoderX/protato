@@ -4,8 +4,8 @@ import com.protato.app.AgentDataPermissions
 import com.protato.app.AgentSettings
 import com.protato.app.AppState
 import com.protato.app.AgentConversationMessage
-import com.protato.app.TodoDraft
-import com.protato.app.todoDraftKey
+import com.protato.app.domain.todo.TodoDraft
+import com.protato.app.domain.todo.todoDraftKey
 import com.protato.app.TodoItem
 import com.protato.app.util.dayKey
 import kotlinx.coroutines.runBlocking
@@ -50,7 +50,7 @@ class AgentTurnServiceTest {
             handledTodoEditKeys = emptySet()
         )
 
-        assertEquals(emptyList<com.protato.app.TodoDraft>(), result.todoDrafts)
+        assertEquals(emptyList<TodoDraft>(), result.todoDrafts)
         assertTrue(result.reply.contains("不会重复提交"))
     }
 
@@ -262,7 +262,7 @@ class AgentTurnServiceTest {
             contextTodoId = "todo-1"
         )
 
-        assertEquals(emptyList<com.protato.app.TodoDraft>(), result.todoDrafts)
+        assertEquals(emptyList<TodoDraft>(), result.todoDrafts)
         assertEquals(listOf("todo-1"), result.todoEdits.map { it.id })
         assertTrue(result.todoEdits.single().subtasks.orEmpty().isNotEmpty())
         assertTrue(result.reply.contains("子任务草案"))
@@ -318,7 +318,9 @@ class AgentTurnServiceTest {
             fallbackTodoDrafts = emptyList(),
             existingTodos = emptyList(),
             handledTodoDraftKeys = emptySet(),
-            handledTodoEditKeys = emptySet()
+            handledTodoEditKeys = emptySet(),
+            allowTodoActions = true,
+            allowedTodoIds = emptySet()
         )
 
         assertEquals("我整理了草案，请确认。", result.reply)
@@ -342,11 +344,53 @@ class AgentTurnServiceTest {
             fallbackTodoDrafts = emptyList(),
             existingTodos = emptyList(),
             handledTodoDraftKeys = setOf(todoDraftKey(draft)),
-            handledTodoEditKeys = emptySet()
+            handledTodoEditKeys = emptySet(),
+            allowTodoActions = true,
+            allowedTodoIds = emptySet()
         )
 
         assertTrue(result.reply.contains("不会重复提交"))
         assertTrue(result.todoDrafts.isEmpty())
         assertTrue(result.todoEdits.isEmpty())
+    }
+
+    @Test
+    fun parsedTodoActionsAreRejectedWithoutTodoPermission() {
+        val existing = TodoItem(id = "todo-1", title = "受保护待办")
+        val result = buildAgentTurnResultFromRawReply(
+            rawReply = """
+                不应接受越权草案。
+                {"tool_calls":[{"function":{"name":"propose_todo_updates","arguments":"{\"edits\":[{\"id\":\"todo-1\",\"title\":\"越权修改\"}]}"}}]}
+            """.trimIndent(),
+            fallbackTodoDrafts = emptyList(),
+            existingTodos = listOf(existing),
+            handledTodoDraftKeys = emptySet(),
+            handledTodoEditKeys = emptySet(),
+            allowTodoActions = false,
+            allowedTodoIds = emptySet()
+        )
+
+        assertTrue(result.todoDrafts.isEmpty())
+        assertTrue(result.todoEdits.isEmpty())
+    }
+
+    @Test
+    fun parsedTodoEditMustTargetAllowedExistingOpenTodo() {
+        val allowed = TodoItem(id = "todo-allowed", title = "允许待办")
+        val denied = TodoItem(id = "todo-denied", title = "范围外待办")
+        val result = buildAgentTurnResultFromRawReply(
+            rawReply = """
+                只应接受允许范围内的修改。
+                {"tool_calls":[{"function":{"name":"propose_todo_updates","arguments":"{\"edits\":[{\"id\":\"todo-allowed\",\"title\":\"允许修改\"},{\"id\":\"todo-denied\",\"title\":\"越权修改\"},{\"id\":\"missing\",\"title\":\"不存在\"}]}"}}]}
+            """.trimIndent(),
+            fallbackTodoDrafts = emptyList(),
+            existingTodos = listOf(allowed, denied),
+            handledTodoDraftKeys = emptySet(),
+            handledTodoEditKeys = emptySet(),
+            allowTodoActions = true,
+            allowedTodoIds = setOf(allowed.id)
+        )
+
+        assertEquals(listOf(allowed.id), result.todoEdits.map { it.id })
     }
 }

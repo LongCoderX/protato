@@ -1,6 +1,6 @@
 package com.protato.app.ai
 
-import com.protato.app.TodoDraft
+import com.protato.app.domain.todo.TodoDraft
 import com.protato.app.util.normalizedTodoDate
 import com.protato.app.util.parseTodoTags
 import java.util.Locale

@@ -4,6 +4,7 @@ import org.json.JSONObject
 import java.io.File
 
 internal const val SECRET_FILE_NAME = "protato-secrets.json"
+internal const val ENCRYPTED_SECRET_FILE_NAME = "protato-secrets.enc"
 
 internal interface SecretStore {
     fun load(): ProtatoSecrets
@@ -26,13 +27,7 @@ internal class FileSecretStore(
 
     override fun load(): ProtatoSecrets {
         if (!file.exists()) return ProtatoSecrets()
-        return runCatching {
-            val root = JSONObject(file.readText())
-            ProtatoSecrets(
-                llmProviderApiKeys = root.optJSONObject("llmProviderApiKeys").toStringMap(),
-                webDavAuthToken = root.optString("webDavAuthToken")
-            )
-        }.getOrDefault(ProtatoSecrets())
+        return runCatching { readPlaintextSecrets(file) }.getOrDefault(ProtatoSecrets())
     }
 
     override fun save(secrets: ProtatoSecrets) {
@@ -41,6 +36,29 @@ internal class FileSecretStore(
             .put("webDavAuthToken", secrets.webDavAuthToken)
         file.writeText(root.toString(2))
     }
+}
+
+internal fun readPlaintextSecrets(file: File): ProtatoSecrets {
+    val root = JSONObject(file.readText())
+    return ProtatoSecrets(
+        llmProviderApiKeys = root.optJSONObject("llmProviderApiKeys").toStringMap(),
+        webDavAuthToken = root.optString("webDavAuthToken")
+    )
+}
+
+internal fun ProtatoSecrets.toJson(): String {
+    return JSONObject()
+        .put("llmProviderApiKeys", llmProviderApiKeys.toJsonObject())
+        .put("webDavAuthToken", webDavAuthToken)
+        .toString(2)
+}
+
+internal fun decodeSecrets(rawJson: String): ProtatoSecrets {
+    val root = JSONObject(rawJson)
+    return ProtatoSecrets(
+        llmProviderApiKeys = root.optJSONObject("llmProviderApiKeys").toStringMap(),
+        webDavAuthToken = root.optString("webDavAuthToken")
+    )
 }
 
 private fun JSONObject?.toStringMap(): Map<String, String> {

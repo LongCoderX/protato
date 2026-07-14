@@ -4,18 +4,20 @@ import android.content.Context
 import android.content.Intent
 import android.media.AudioManager
 import android.media.ToneGenerator
-import android.os.Build
 import androidx.core.content.ContextCompat.startForegroundService
-import com.protato.app.ACTION_START_TIMER_SERVICE
-import com.protato.app.PomodoroTimerService
+import com.protato.app.TimerSession
 
-internal fun Context.startPomodoroService(action: String) {
-    val intent = Intent(this, PomodoroTimerService::class.java).setAction(action)
-    if (action == ACTION_START_TIMER_SERVICE && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-        startForegroundService(this, intent)
-    } else {
-        startService(intent)
-    }
+internal fun Context.startPomodoroService(session: TimerSession) {
+    val intent = Intent(this, PomodoroTimerService::class.java)
+        .setAction(ACTION_START_TIMER_SERVICE)
+        .putExtra(EXTRA_TIMER_MODE, session.mode.name)
+        .putExtra(EXTRA_TIMER_TODO_ID, session.todoId)
+        .putExtra(EXTRA_TIMER_TODO_TITLE, session.todoTitle)
+        .putExtra(EXTRA_TIMER_STARTED_AT, session.startedAt)
+        .putExtra(EXTRA_TIMER_ENDS_AT, session.endsAt)
+        .putExtra(EXTRA_TIMER_TOTAL_SECONDS, session.totalSeconds)
+        .putExtra(EXTRA_TIMER_TEMPLATE_ID, session.templateId)
+    startForegroundService(this, intent)
 }
 
 internal fun playTodoCompletedSound() {

@@ -3,6 +3,7 @@ package com.protato.app.domain.timer
 import com.protato.app.AppState
 import com.protato.app.PendingPomodoroRecord
 import com.protato.app.TimerMode
+import com.protato.app.TimerSession
 
 internal data class PendingRecord(
     val todoId: String?,
@@ -12,15 +13,6 @@ internal data class PendingRecord(
     val focusMinutes: Int,
     val templateId: String
 )
-
-internal fun AppState.withNextRevisionFrom(previous: AppState): AppState {
-    val normalizedNext = copy(projectRevision = previous.projectRevision)
-    return if (normalizedNext == previous) {
-        normalizedNext
-    } else {
-        normalizedNext.copy(projectRevision = previous.projectRevision + 1)
-    }
-}
 
 internal fun TimerMode.label(): String = when (this) {
     TimerMode.Focus -> "专注"
@@ -49,8 +41,57 @@ internal fun PendingPomodoroRecord.toPendingRecordUi(): PendingRecord {
     )
 }
 
-internal fun completeSession(state: AppState): AppState {
+internal fun startTimer(
+    state: AppState,
+    mode: TimerMode,
+    todoId: String?,
+    todoTitle: String,
+    totalSeconds: Int,
+    templateId: String,
+    nowMillis: Long
+): AppState {
+    if (state.activeSession != null) return state
+    val durationSeconds = totalSeconds.coerceAtLeast(1)
+    return state.copy(
+        activeSession = TimerSession(
+            mode = mode,
+            todoId = todoId,
+            todoTitle = todoTitle.ifBlank { "未绑定任务" },
+            startedAt = nowMillis,
+            endsAt = nowMillis + durationSeconds * 1000L,
+            totalSeconds = durationSeconds,
+            templateId = templateId
+        )
+    )
+}
+
+internal fun pauseTimer(state: AppState, nowMillis: Long): AppState {
     val session = state.activeSession ?: return state
+    if (session.pausedRemainingSeconds != null) return state
+    return state.copy(
+        activeSession = session.copy(pausedRemainingSeconds = session.remainingSeconds(nowMillis))
+    )
+}
+
+internal fun resumeTimer(state: AppState, nowMillis: Long): AppState {
+    val session = state.activeSession ?: return state
+    val remainingSeconds = session.pausedRemainingSeconds ?: return state
+    return state.copy(
+        activeSession = session.copy(
+            endsAt = nowMillis + remainingSeconds * 1000L,
+            pausedRemainingSeconds = null
+        )
+    )
+}
+
+internal fun resetTimer(state: AppState): AppState {
+    if (state.activeSession == null) return state
+    return state.copy(activeSession = null)
+}
+
+internal fun completeTimer(state: AppState, nowMillis: Long): AppState {
+    val session = state.activeSession ?: return state
+    if (session.pausedRemainingSeconds != null || session.remainingSeconds(nowMillis) > 0) return state
     val pendingRecord = if (session.mode == TimerMode.Focus) {
         PendingPomodoroRecord(
             todoId = session.todoId,
@@ -61,7 +102,12 @@ internal fun completeSession(state: AppState): AppState {
             templateId = session.templateId
         )
     } else {
-        null
+        state.pendingRecord
     }
     return state.copy(activeSession = null, pendingRecord = pendingRecord)
+}
+
+internal fun TimerSession.remainingSeconds(nowMillis: Long): Int {
+    pausedRemainingSeconds?.let { return it.coerceAtLeast(0) }
+    return (((endsAt - nowMillis).coerceAtLeast(0L) + 999L) / 1000L).toInt()
 }

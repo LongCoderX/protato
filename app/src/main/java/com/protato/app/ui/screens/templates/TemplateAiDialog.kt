@@ -15,10 +15,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -26,34 +25,46 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.protato.app.FieldType
 import com.protato.app.RecordTemplate
-import kotlinx.coroutines.launch
+import com.protato.app.ai.AsyncRequestState
+import com.protato.app.ai.TemplateSuggestionController
 
 @Composable
-fun TemplateAiDialog(
-    generateSuggestion: suspend (String) -> RecordTemplate,
-    fallbackSuggestion: (String) -> RecordTemplate,
+internal fun TemplateAiDialog(
+    controller: TemplateSuggestionController,
+    generateSuggestion: (String) -> Boolean,
     fieldTypeLabel: (FieldType) -> String,
     onDismiss: () -> Unit,
     onAddTemplate: (RecordTemplate) -> Unit
 ) {
-    val scope = rememberCoroutineScope()
     var rawInput by rememberSaveable { mutableStateOf("") }
-    var suggestion by remember { mutableStateOf<RecordTemplate?>(null) }
-    var loading by rememberSaveable { mutableStateOf(false) }
-    var errorText by rememberSaveable { mutableStateOf<String?>(null) }
+    val requestState by controller.state.collectAsState()
+    val outcome = (requestState as? AsyncRequestState.Success)?.value
+    val suggestion = outcome?.suggestion
+    val loading = requestState is AsyncRequestState.Loading
+    val errorText = outcome?.errorText
+        ?: (requestState as? AsyncRequestState.Failed)?.error?.message
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = {
+            controller.cancel()
+            onDismiss()
+        },
         confirmButton = {
             TextButton(
                 enabled = suggestion != null,
-                onClick = { suggestion?.let(onAddTemplate) }
+                onClick = {
+                    controller.cancel()
+                    suggestion?.let(onAddTemplate)
+                }
             ) {
                 Text("添加模板")
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            TextButton(onClick = {
+                controller.cancel()
+                onDismiss()
+            }) {
                 Text("关闭")
             }
         },
@@ -75,17 +86,7 @@ fun TemplateAiDialog(
                 OutlinedButton(
                     enabled = rawInput.isNotBlank() && !loading,
                     onClick = {
-                        scope.launch {
-                            loading = true
-                            errorText = null
-                            suggestion = runCatching {
-                                generateSuggestion(rawInput)
-                            }.getOrElse { error ->
-                                errorText = error.message ?: "生成失败"
-                                fallbackSuggestion(rawInput)
-                            }
-                            loading = false
-                        }
+                        generateSuggestion(rawInput)
                     }
                 ) {
                     Text(if (loading) "生成中" else "生成模板")

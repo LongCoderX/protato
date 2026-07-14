@@ -20,8 +20,8 @@ internal fun reduceSettingsEvent(
             StateReduction(state.copy(themeChoice = event.themeChoice))
         }
 
-        is ProtatoEvent.UpdateWebDavSync -> {
-            StateReduction(state.copy(webDevSync = event.settings))
+        is ProtatoEvent.UpdateWebDavBackup -> {
+            StateReduction(state.copy(webDavBackup = event.settings))
         }
 
         is ProtatoEvent.UpsertLlmProvider -> {

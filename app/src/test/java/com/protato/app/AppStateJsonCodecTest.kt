@@ -1,7 +1,9 @@
 package com.protato.app
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.json.JSONObject
 
 class AppStateJsonCodecTest {
     @Test
@@ -134,7 +136,7 @@ class AppStateJsonCodecTest {
                 )
             ),
             agentMemory = "偏好小步重构",
-            webDevSync = WebDevSyncSettings(
+            webDavBackup = WebDavBackupSettings(
                 enabled = true,
                 username = "sync-user",
                 authToken = "sync-token"
@@ -146,6 +148,10 @@ class AppStateJsonCodecTest {
         val decoded = AppStateJsonCodec.decode(AppStateJsonCodec.encode(state))
 
         assertEquals(state, decoded)
+        assertEquals(
+            CURRENT_APP_STATE_SCHEMA_VERSION,
+            JSONObject(AppStateJsonCodec.encode(state)).getInt("schemaVersion")
+        )
     }
 
     @Test
@@ -161,6 +167,28 @@ class AppStateJsonCodecTest {
         assertEquals("agent-welcome", decoded.agentMessages.single().id)
         assertEquals("assistant", decoded.agentMessages.single().role)
         assertEquals(defaultAgentConversation().single().content, decoded.agentMessages.single().content)
-        assertEquals(WebDevSyncSettings(), decoded.webDevSync)
+        assertEquals(WebDavBackupSettings(), decoded.webDavBackup)
+    }
+
+    @Test
+    fun decodeMigratesLegacyWebDavSyncSettings() {
+        val rawJson = """
+            {
+              "schemaVersion": 1,
+              "webDevSync": {
+                "enabled": true,
+                "username": "legacy@example.com",
+                "authToken": "legacy-token"
+              }
+            }
+        """.trimIndent()
+
+        val decoded = AppStateJsonCodec.decode(rawJson)
+        val migration = AppStateMigration.inspect(rawJson)
+
+        assertTrue(decoded.webDavBackup.enabled)
+        assertEquals("legacy@example.com", decoded.webDavBackup.username)
+        assertEquals("legacy-token", decoded.webDavBackup.authToken)
+        assertTrue(migration.messages.any { it.contains("webDevSync") })
     }
 }

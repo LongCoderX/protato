@@ -1,10 +1,10 @@
 package com.protato.app.ai
 
-import com.protato.app.TodoDraft
-import com.protato.app.TodoEditDraft
+import com.protato.app.domain.todo.TodoDraft
+import com.protato.app.domain.todo.TodoEditDraft
 import com.protato.app.TodoComplexity
 import com.protato.app.TodoSubtask
-import com.protato.app.todoEditDraftKey
+import com.protato.app.domain.todo.todoEditDraftKey
 import com.protato.app.util.newId
 import com.protato.app.util.normalizedReminderAt
 import com.protato.app.util.normalizedTodoDate

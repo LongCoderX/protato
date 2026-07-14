@@ -11,9 +11,13 @@ class BackupRulesTest {
         val dataExtractionRules = File("src/main/res/xml/data_extraction_rules.xml").readText()
 
         assertTrue(backupRules.contains("""path="$STATE_FILE_NAME""""))
+        assertTrue(backupRules.contains("""path="$STATE_BACKUP_FILE_NAME""""))
         assertTrue(backupRules.contains("""path="$SECRET_FILE_NAME""""))
+        assertTrue(backupRules.contains("""path="$ENCRYPTED_SECRET_FILE_NAME""""))
         assertTrue(dataExtractionRules.contains("""path="$STATE_FILE_NAME""""))
+        assertTrue(dataExtractionRules.contains("""path="$STATE_BACKUP_FILE_NAME""""))
         assertTrue(dataExtractionRules.contains("""path="$SECRET_FILE_NAME""""))
+        assertTrue(dataExtractionRules.contains("""path="$ENCRYPTED_SECRET_FILE_NAME""""))
     }
 
     @Test

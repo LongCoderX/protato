@@ -1,9 +1,9 @@
 package com.protato.app.ai
 
-import com.protato.app.TodoDraft
-import com.protato.app.TodoEditDraft
-import com.protato.app.todoDraftKey
-import com.protato.app.todoEditDraftKey
+import com.protato.app.domain.todo.TodoDraft
+import com.protato.app.domain.todo.TodoEditDraft
+import com.protato.app.domain.todo.todoDraftKey
+import com.protato.app.domain.todo.todoEditDraftKey
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

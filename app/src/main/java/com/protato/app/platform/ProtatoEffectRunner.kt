@@ -2,12 +2,6 @@ package com.protato.app.platform
 
 import android.content.Context
 import android.content.Intent
-import com.protato.app.ACTION_START_TIMER_SERVICE
-import com.protato.app.ACTION_STOP_TIMER_SERVICE
-import com.protato.app.PomodoroAlarmScheduler
-import com.protato.app.PomodoroNotifications
-import com.protato.app.PomodoroTimerService
-import com.protato.app.TodoReminderScheduler
 import com.protato.app.state.ProtatoEffect
 
 internal class ProtatoEffectRunner(private val context: Context) {
@@ -21,12 +15,11 @@ internal class ProtatoEffectRunner(private val context: Context) {
                 playTodoCompletedSound()
             }
 
-            ProtatoEffect.StartTimerService -> {
-                context.startPomodoroService(ACTION_START_TIMER_SERVICE)
+            is ProtatoEffect.StartTimerService -> {
+                context.startPomodoroService(effect.session)
             }
 
             ProtatoEffect.StopTimerService -> {
-                context.startPomodoroService(ACTION_STOP_TIMER_SERVICE)
                 context.stopService(Intent(context, PomodoroTimerService::class.java))
             }
 

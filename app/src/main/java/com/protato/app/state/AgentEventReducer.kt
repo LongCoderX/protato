@@ -1,7 +1,7 @@
 package com.protato.app.state
 
 import com.protato.app.AppState
-import com.protato.app.TodoEditDraft
+import com.protato.app.domain.todo.TodoEditDraft
 import com.protato.app.ai.appendAgentMessage
 
 internal fun reduceAgentEvent(

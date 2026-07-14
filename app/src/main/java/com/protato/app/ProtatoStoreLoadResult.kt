@@ -21,3 +21,9 @@ sealed interface ProtatoStoreLoadResult {
         override val state: AppState = AppState()
     ) : ProtatoStoreLoadResult
 }
+
+sealed interface AppStateSaveResult {
+    data object Success : AppStateSaveResult
+
+    data class Failed(val error: Throwable) : AppStateSaveResult
+}

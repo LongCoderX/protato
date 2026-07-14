@@ -1,5 +1,7 @@
 package com.protato.app
 
+import com.protato.app.domain.todo.summarizeTodoWithSubtasks
+import com.protato.app.domain.todo.toggleSubtask
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test

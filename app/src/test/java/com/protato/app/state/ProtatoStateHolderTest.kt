@@ -1,6 +1,7 @@
 package com.protato.app.state
 
 import com.protato.app.AppState
+import com.protato.app.AppStateUpdateResult
 import com.protato.app.AgentSettings
 import com.protato.app.DailySummary
 import com.protato.app.DEFAULT_NICKNAME
@@ -9,12 +10,13 @@ import com.protato.app.LlmProviderSettings
 import com.protato.app.PendingPomodoroRecord
 import com.protato.app.RecordTemplate
 import com.protato.app.PomodoroRecord
+import com.protato.app.ProtatoStoreLoadResult
 import com.protato.app.TimerMode
 import com.protato.app.TimerSession
 import com.protato.app.TodoCompletionReview
 import com.protato.app.TodoComplexity
-import com.protato.app.TodoDraft
-import com.protato.app.TodoEditDraft
+import com.protato.app.domain.todo.TodoDraft
+import com.protato.app.domain.todo.TodoEditDraft
 import com.protato.app.TodoItem
 import com.protato.app.TodoSubtask
 import com.protato.app.defaultTemplate
@@ -23,6 +25,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
 
 class ProtatoStateHolderTest {
     @Test
@@ -62,7 +65,7 @@ class ProtatoStateHolderTest {
         holder.dispatch(ProtatoEvent.ToggleTodo(todo))
 
         assertEquals(true, holder.appState.todos.single().completed)
-        assertEquals(dayKey(System.currentTimeMillis()), holder.appState.todos.single().dueDate)
+        assertEquals(dayKey(FIXED_NOW_MILLIS), holder.appState.todos.single().dueDate)
     }
 
     @Test
@@ -85,7 +88,7 @@ class ProtatoStateHolderTest {
 
         assertEquals(true, holder.appState.todos.single().completed)
         assertEquals(review, holder.appState.todos.single().completionReview)
-        assertEquals(dayKey(System.currentTimeMillis()), holder.appState.todos.single().dueDate)
+        assertEquals(dayKey(FIXED_NOW_MILLIS), holder.appState.todos.single().dueDate)
         assertEquals(
             listOf(
                 ProtatoEffect.CancelTodoReminder("todo-1"),
@@ -143,7 +146,7 @@ class ProtatoStateHolderTest {
 
         holder.dispatch(ProtatoEvent.MoveTodosToToday(setOf("todo-1", "todo-2")))
 
-        assertEquals(dayKey(System.currentTimeMillis()), holder.appState.todos[0].dueDate)
+        assertEquals(dayKey(FIXED_NOW_MILLIS), holder.appState.todos[0].dueDate)
         assertEquals(yesterday, holder.appState.todos[1].dueDate)
     }
 
@@ -282,16 +285,27 @@ class ProtatoStateHolderTest {
     }
 
     @Test
-    fun dispatchSetActiveSessionStoresSessionAndStartsTimerService() {
+    fun dispatchStartTimerCreatesSessionAndStartsTimerService() {
         val holder = testHolder()
-        val session = testSession()
 
-        val result = holder.dispatch(ProtatoEvent.SetActiveSession(session))
+        val result = holder.dispatch(
+            ProtatoEvent.StartTimer(
+                mode = TimerMode.Focus,
+                todoId = "todo-1",
+                todoTitle = "写测试",
+                totalSeconds = 1_500,
+                templateId = "template-1"
+            )
+        )
 
+        val session = holder.appState.activeSession
+        assertEquals(FIXED_NOW_MILLIS, session?.startedAt)
+        assertEquals(FIXED_NOW_MILLIS + 1_500_000L, session?.endsAt)
+        assertEquals(1_500, session?.totalSeconds)
         assertEquals(session, holder.appState.activeSession)
         assertEquals(
             listOf(
-                ProtatoEffect.StartTimerService,
+                ProtatoEffect.StartTimerService(session!!),
                 ProtatoEffect.ScheduleTimerAlarm(session)
             ),
             result.effects
@@ -312,10 +326,15 @@ class ProtatoStateHolderTest {
     }
 
     @Test
-    fun dispatchPauseActiveSessionStoresRemainingSecondsAndStopsTimerEffects() {
-        val holder = testHolder(AppState(activeSession = testSession()))
+    fun dispatchPauseTimerCalculatesRemainingSecondsFromClock() {
+        val now = FIXED_NOW_MILLIS + 18_000L
+        val session = testSession().copy(
+            endsAt = FIXED_NOW_MILLIS + 60_000L,
+            totalSeconds = 60
+        )
+        val holder = testHolder(AppState(activeSession = session), nowMillis = { now })
 
-        val result = holder.dispatch(ProtatoEvent.PauseActiveSession(42))
+        val result = holder.dispatch(ProtatoEvent.PauseTimer)
 
         assertEquals(42, holder.appState.activeSession?.pausedRemainingSeconds)
         assertEquals(
@@ -328,10 +347,31 @@ class ProtatoStateHolderTest {
     }
 
     @Test
-    fun dispatchClearActiveSessionClearsSessionAndStopsTimerEffects() {
+    fun dispatchResumeTimerCalculatesNewEndFromClock() {
+        val now = FIXED_NOW_MILLIS + 90_000L
+        val pausedSession = testSession().copy(pausedRemainingSeconds = 42)
+        val holder = testHolder(AppState(activeSession = pausedSession), nowMillis = { now })
+
+        val result = holder.dispatch(ProtatoEvent.ResumeTimer)
+
+        val resumedSession = holder.appState.activeSession
+        assertEquals(pausedSession.startedAt, resumedSession?.startedAt)
+        assertEquals(now + 42_000L, resumedSession?.endsAt)
+        assertNull(resumedSession?.pausedRemainingSeconds)
+        assertEquals(
+            listOf(
+                ProtatoEffect.StartTimerService(resumedSession!!),
+                ProtatoEffect.ScheduleTimerAlarm(resumedSession)
+            ),
+            result.effects
+        )
+    }
+
+    @Test
+    fun dispatchResetTimerClearsSessionAndStopsTimerEffects() {
         val holder = testHolder(AppState(activeSession = testSession()))
 
-        val result = holder.dispatch(ProtatoEvent.ClearActiveSession)
+        val result = holder.dispatch(ProtatoEvent.ResetTimer)
 
         assertNull(holder.appState.activeSession)
         assertEquals(
@@ -341,6 +381,60 @@ class ProtatoStateHolderTest {
             ),
             result.effects
         )
+    }
+
+    @Test
+    fun dispatchCompleteTimerCreatesOnePendingFocusRecord() {
+        val session = testSession().copy(endsAt = FIXED_NOW_MILLIS)
+        val holder = testHolder(AppState(activeSession = session))
+
+        val result = holder.dispatch(ProtatoEvent.CompleteTimer)
+
+        assertNull(holder.appState.activeSession)
+        assertEquals(session.todoId, holder.appState.pendingRecord?.todoId)
+        assertEquals(session.startedAt, holder.appState.pendingRecord?.startedAt)
+        assertEquals(session.endsAt, holder.appState.pendingRecord?.endedAt)
+        assertEquals(25, holder.appState.pendingRecord?.focusMinutes)
+        assertEquals(
+            listOf(
+                ProtatoEffect.StopTimerService,
+                ProtatoEffect.CancelTimerAlarm,
+                ProtatoEffect.CancelTimerNotification
+            ),
+            result.effects
+        )
+    }
+
+    @Test
+    fun dispatchCompleteTimerTwiceDoesNotDuplicateCompletion() {
+        val holder = testHolder(
+            AppState(activeSession = testSession().copy(endsAt = FIXED_NOW_MILLIS))
+        )
+
+        holder.dispatch(ProtatoEvent.CompleteTimer)
+        val completedState = holder.appState
+        val duplicateResult = holder.dispatch(ProtatoEvent.CompleteTimer)
+
+        assertEquals(completedState, holder.appState)
+        assertTrue(duplicateResult.effects.isEmpty())
+    }
+
+    @Test
+    fun dispatchCompleteBreakTimerDoesNotCreateFocusRecord() {
+        val holder = testHolder(
+            AppState(
+                activeSession = testSession().copy(
+                    mode = TimerMode.Break,
+                    endsAt = FIXED_NOW_MILLIS
+                )
+            )
+        )
+
+        holder.dispatch(ProtatoEvent.CompleteTimer)
+
+        assertNull(holder.appState.activeSession)
+        assertNull(holder.appState.pendingRecord)
+        assertTrue(holder.appState.records.isEmpty())
     }
 
     @Test
@@ -446,11 +540,65 @@ class ProtatoStateHolderTest {
         assertEquals("已拒绝本次待办草案。", holder.appState.agentMessages.single().content)
     }
 
-    private fun testHolder(initialState: AppState = AppState()): ProtatoStateHolder {
+    @Test
+    fun saveFailureExposesVisibleErrorState() = runBlocking {
+        val holder = ProtatoStateHolder(
+            initialState = AppState(),
+            saveState = { _, _ -> AppStateUpdateResult.Failed(IllegalStateException("disk full")) },
+            syncReminders = {}
+        )
+        holder.dispatch(ProtatoEvent.UpdateNickname("新昵称"))
+
+        val result = holder.saveCurrentState()
+
+        assertTrue(result is AppStateUpdateResult.Failed)
+        assertEquals("disk full", holder.saveErrorMessage)
+    }
+
+    @Test
+    fun secretLoadFailureExposesVisibleErrorState() = runBlocking {
+        val holder = ProtatoStateHolder(
+            initialState = AppState(),
+            loadState = {
+                ProtatoStoreLoadResult.Failed(IllegalStateException("密钥不可解密"))
+            },
+            saveState = { _, state -> AppStateUpdateResult.Updated(state) },
+            syncReminders = {},
+            initiallyLoaded = false
+        )
+
+        val result = holder.loadCurrentState()
+
+        assertTrue(result is ProtatoStoreLoadResult.Failed)
+        assertEquals("密钥不可解密", holder.saveErrorMessage)
+    }
+
+    @Test
+    fun saveOnlySyncsRemindersWhenTodosChange() = runBlocking {
+        var reminderSyncCount = 0
+        val holder = ProtatoStateHolder(
+            initialState = AppState(),
+            saveState = { _, state -> AppStateUpdateResult.Updated(state) },
+            syncReminders = { reminderSyncCount += 1 }
+        )
+
+        holder.dispatch(ProtatoEvent.UpdateNickname("新昵称"))
+        holder.saveCurrentState()
+        holder.dispatch(ProtatoEvent.AddTodo(TodoItem(id = "todo-1", title = "写测试")))
+        holder.saveCurrentState()
+
+        assertEquals(1, reminderSyncCount)
+    }
+
+    private fun testHolder(
+        initialState: AppState = AppState(),
+        nowMillis: () -> Long = { FIXED_NOW_MILLIS }
+    ): ProtatoStateHolder {
         return ProtatoStateHolder(
             initialState = initialState,
-            saveState = {},
-            syncReminders = {}
+            saveState = { _, state -> AppStateUpdateResult.Updated(state) },
+            syncReminders = {},
+            nowMillis = nowMillis
         )
     }
 
@@ -500,8 +648,8 @@ class ProtatoStateHolderTest {
             mode = TimerMode.Focus,
             todoId = "todo-1",
             todoTitle = "写测试",
-            startedAt = 1_000L,
-            endsAt = 2_500L,
+            startedAt = FIXED_NOW_MILLIS - 1_500_000L,
+            endsAt = FIXED_NOW_MILLIS,
             totalSeconds = 1_500,
             templateId = "template-1"
         )
@@ -516,5 +664,9 @@ class ProtatoStateHolderTest {
             focusMinutes = 25,
             templateId = templateId
         )
+    }
+
+    private companion object {
+        const val FIXED_NOW_MILLIS = 1_750_000_000_000L
     }
 }

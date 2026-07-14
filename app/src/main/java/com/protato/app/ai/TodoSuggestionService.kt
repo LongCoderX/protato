@@ -3,7 +3,7 @@ package com.protato.app.ai
 import com.protato.app.AgentSettings
 import com.protato.app.AppState
 import com.protato.app.LlmProviderSettings
-import com.protato.app.TodoDraft
+import com.protato.app.domain.todo.TodoDraft
 import com.protato.app.util.dayKey
 import java.util.Locale
 

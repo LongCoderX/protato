@@ -24,7 +24,7 @@ class ProtatoStoreTest {
             todos = listOf(TodoItem(id = "todo-1", title = "写测试")),
             nickname = "测试用户"
         )
-        store.save(state)
+        assertEquals(AppStateSaveResult.Success, store.save(state))
 
         val result = store.loadResult()
 
@@ -49,7 +49,7 @@ class ProtatoStoreTest {
                     apiKey = "provider-secret"
                 )
             ),
-            webDevSync = WebDevSyncSettings(
+            webDavBackup = WebDavBackupSettings(
                 enabled = true,
                 username = "sync-user",
                 authToken = "webdav-secret"
@@ -85,7 +85,7 @@ class ProtatoStoreTest {
                             apiKey = "legacy-api-key"
                         )
                     ),
-                    webDevSync = WebDevSyncSettings(
+                    webDavBackup = WebDavBackupSettings(
                         enabled = true,
                         username = "legacy-user",
                         authToken = "legacy-webdav-token"
@@ -99,7 +99,7 @@ class ProtatoStoreTest {
         store.save(loaded)
 
         assertEquals("legacy-api-key", loaded.llmProviders.single().apiKey)
-        assertEquals("legacy-webdav-token", loaded.webDevSync.authToken)
+        assertEquals("legacy-webdav-token", loaded.webDavBackup.authToken)
         assertTrue(!stateFile.readText().contains("legacy-api-key"))
         assertTrue(!stateFile.readText().contains("legacy-webdav-token"))
         assertTrue(secretFile.readText().contains("legacy-api-key"))
@@ -139,6 +139,75 @@ class ProtatoStoreTest {
         assertTrue(result.messages.any { it.contains("llmImport") })
         assertTrue(result.messages.any { it.contains("encouragerAgent") })
         assertTrue(result.messages.any { it.contains("shortBreakMinutes") })
+        assertTrue(result.messages.any { it.contains("schema") })
+    }
+
+    @Test
+    fun failedWriteDoesNotDamagePreviousStateFile() {
+        val file = tempStateFile()
+        val originalState = AppState(nickname = "原状态")
+        val workingStore = ProtatoStore(file)
+        assertEquals(AppStateSaveResult.Success, workingStore.save(originalState))
+        val originalJson = file.readText()
+        val failingStore = ProtatoStore(
+            file = file,
+            atomicWriter = { _, _ -> error("disk full") }
+        )
+
+        val result = failingStore.save(AppState(nickname = "不应落盘"))
+
+        assertTrue(result is AppStateSaveResult.Failed)
+        assertEquals(originalJson, file.readText())
+        assertEquals(originalState, workingStore.load())
+    }
+
+    @Test
+    fun failedStateWriteRollsBackSecrets() {
+        val oldSecrets = ProtatoSecrets(
+            llmProviderApiKeys = mapOf("provider-1" to "old-secret"),
+            webDavAuthToken = "old-token"
+        )
+        val secretStore = RecordingSecretStore(oldSecrets)
+        val store = ProtatoStore(
+            file = tempStateFile(),
+            secretStore = secretStore,
+            atomicWriter = { _, _ -> error("disk full") }
+        )
+        val state = AppState(
+            llmProviders = listOf(
+                LlmProviderSettings(
+                    id = "provider-1",
+                    providerKey = "custom",
+                    name = "Provider",
+                    apiKey = "new-secret"
+                )
+            ),
+            webDavBackup = WebDavBackupSettings(authToken = "new-token")
+        )
+
+        val result = store.save(state)
+
+        assertTrue(result is AppStateSaveResult.Failed)
+        assertEquals(oldSecrets, secretStore.current)
+        assertEquals("new-secret", secretStore.saved[0].llmProviderApiKeys["provider-1"])
+        assertEquals(oldSecrets, secretStore.saved[1])
+    }
+
+    @Test
+    fun corruptedMainFileRecoversLastValidBackup() {
+        val file = tempStateFile()
+        val store = ProtatoStore(file)
+        val backedUpState = AppState(nickname = "可恢复状态")
+        assertEquals(AppStateSaveResult.Success, store.save(backedUpState))
+        assertEquals(AppStateSaveResult.Success, store.save(AppState(nickname = "最新状态")))
+        file.writeText("{ broken")
+
+        val result = store.loadResult()
+
+        assertTrue(result is ProtatoStoreLoadResult.Recovered)
+        result as ProtatoStoreLoadResult.Recovered
+        assertEquals(backedUpState, result.state)
+        assertTrue(result.messages.any { it.contains("backup") })
     }
 
     @Test
@@ -150,11 +219,42 @@ class ProtatoStoreTest {
         val result = store.loadResult()
 
         assertTrue(result is ProtatoStoreLoadResult.Failed)
-        assertEquals(AppState(), result.state)
-        assertEquals(AppState(), store.load())
+        assertTrue(result.state.todos.isEmpty())
+        assertEquals(DEFAULT_NICKNAME, result.state.nickname)
+    }
+
+    @Test
+    fun secretDecryptionFailureReturnsExplicitLoadFailure() {
+        val file = tempStateFile()
+        file.writeText(AppStateJsonCodec.encode(AppState()))
+        val store = ProtatoStore(file, secretStore = ThrowingSecretStore())
+
+        val result = store.loadResult()
+
+        assertTrue(result is ProtatoStoreLoadResult.Failed)
+        result as ProtatoStoreLoadResult.Failed
+        assertEquals("密钥不可解密", result.error.message)
     }
 
     private fun tempStateFile(): File = File(tempStateDir(), STATE_FILE_NAME)
 
     private fun tempStateDir(): File = Files.createTempDirectory("protato-store-test").toFile()
+}
+
+private class RecordingSecretStore(initial: ProtatoSecrets) : SecretStore {
+    var current: ProtatoSecrets = initial
+    val saved = mutableListOf<ProtatoSecrets>()
+
+    override fun load(): ProtatoSecrets = current
+
+    override fun save(secrets: ProtatoSecrets) {
+        current = secrets
+        saved += secrets
+    }
+}
+
+private class ThrowingSecretStore : SecretStore {
+    override fun load(): ProtatoSecrets = throw SecretDecryptionException(IllegalStateException("invalid key"))
+
+    override fun save(secrets: ProtatoSecrets) = error("must not save")
 }

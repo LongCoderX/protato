@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <full-backup-content>
     <exclude domain="file" path="protato-state.json" />
+    <exclude domain="file" path="protato-state.backup.json" />
     <exclude domain="file" path="protato-secrets.json" />
+    <exclude domain="file" path="protato-secrets.enc" />
 </full-backup-content>

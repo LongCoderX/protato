@@ -8,12 +8,11 @@ import com.protato.app.PomodoroRecord
 import com.protato.app.ProtatoThemeChoice
 import com.protato.app.RecordTemplate
 import com.protato.app.TimerMode
-import com.protato.app.TimerSession
 import com.protato.app.TodoCompletionReview
-import com.protato.app.TodoDraft
-import com.protato.app.TodoEditDraft
+import com.protato.app.domain.todo.TodoDraft
+import com.protato.app.domain.todo.TodoEditDraft
 import com.protato.app.TodoItem
-import com.protato.app.WebDevSyncSettings
+import com.protato.app.WebDavBackupSettings
 
 internal sealed interface ProtatoEvent {
     data class AddTodo(val todo: TodoItem) : TodoProtatoEvent
@@ -32,15 +31,23 @@ internal sealed interface ProtatoEvent {
     data class UpdateNickname(val nickname: String) : SettingsProtatoEvent
     data class UpdateFontScale(val fontScale: Float) : SettingsProtatoEvent
     data class UpdateThemeChoice(val themeChoice: ProtatoThemeChoice) : SettingsProtatoEvent
-    data class UpdateWebDavSync(val settings: WebDevSyncSettings) : SettingsProtatoEvent
+    data class UpdateWebDavBackup(val settings: WebDavBackupSettings) : SettingsProtatoEvent
     data class UpsertLlmProvider(val provider: LlmProviderSettings) : SettingsProtatoEvent
     data class DeleteLlmProvider(val provider: LlmProviderSettings) : SettingsProtatoEvent
     data class SelectRecordPolishProvider(val providerId: String) : SettingsProtatoEvent
     data class UpdateTimerDuration(val mode: TimerMode, val minutes: Int) : TimerProtatoEvent
-    data class SetActiveSession(val session: TimerSession) : TimerProtatoEvent
+    data class StartTimer(
+        val mode: TimerMode,
+        val todoId: String?,
+        val todoTitle: String,
+        val totalSeconds: Int,
+        val templateId: String
+    ) : TimerProtatoEvent
     data class UpdateActiveSessionTodo(val todoId: String?, val todoTitle: String) : TimerProtatoEvent
-    data class PauseActiveSession(val remainingSeconds: Int) : TimerProtatoEvent
-    data object ClearActiveSession : TimerProtatoEvent
+    data object PauseTimer : TimerProtatoEvent
+    data object ResumeTimer : TimerProtatoEvent
+    data object ResetTimer : TimerProtatoEvent
+    data object CompleteTimer : TimerProtatoEvent
     data object ClearPendingRecord : TimerProtatoEvent
     data class SavePendingRecord(val record: PendingPomodoroRecord, val answers: List<FieldAnswer>) : TimerProtatoEvent
     data class AppendAgentMessage(val role: String, val content: String) : AgentProtatoEvent

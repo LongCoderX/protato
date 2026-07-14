@@ -5,12 +5,12 @@ import com.protato.app.AppState
 import com.protato.app.DEFAULT_NICKNAME
 import com.protato.app.LlmProviderSettings
 import com.protato.app.TodoComplexity
-import com.protato.app.TodoDraft
-import com.protato.app.TodoEditDraft
+import com.protato.app.domain.todo.TodoDraft
+import com.protato.app.domain.todo.TodoEditDraft
 import com.protato.app.TodoItem
 import com.protato.app.TodoSubtask
-import com.protato.app.filterNewTodoDrafts
-import com.protato.app.filterNewTodoEdits
+import com.protato.app.domain.todo.filterNewTodoDrafts
+import com.protato.app.domain.todo.filterNewTodoEdits
 import com.protato.app.util.newId
 import com.protato.app.util.dayKey
 import java.util.Locale
@@ -141,6 +141,8 @@ internal suspend fun runAgentTurn(
         existingTodos = userState.todos,
         handledTodoDraftKeys = handledTodoDraftKeys,
         handledTodoEditKeys = handledTodoEditKeys,
+        allowTodoActions = canReadTodos,
+        allowedTodoIds = userState.todos.filterNot { it.completed }.mapTo(mutableSetOf(), TodoItem::id),
         errorText = errorText
     )
 }
@@ -156,13 +158,19 @@ internal fun buildAgentTurnResultFromRawReply(
     existingTodos: List<TodoItem>,
     handledTodoDraftKeys: Set<String>,
     handledTodoEditKeys: Set<String>,
+    allowTodoActions: Boolean,
+    allowedTodoIds: Set<String>,
     errorText: String? = null
 ): AgentTurnResult {
     val toolResponse = parseAgentToolResponse(rawReply)
-    val parsedTodoDrafts = toolResponse.todoDrafts
+    val parsedTodoDrafts = toolResponse.todoDrafts.takeIf { allowTodoActions }.orEmpty()
     val parsedTodoEdits = toolResponse.todoEdits
+        .takeIf { allowTodoActions }
+        .orEmpty()
+        .filter { it.id in allowedTodoIds }
+    val permittedFallbackDrafts = fallbackTodoDrafts.takeIf { allowTodoActions }.orEmpty()
     val finalTodoDrafts = parsedTodoDrafts
-        .ifEmpty { fallbackTodoDrafts }
+        .ifEmpty { permittedFallbackDrafts }
         .filterNewTodoDrafts(
             existingTodos = existingTodos,
             handledKeys = handledTodoDraftKeys
@@ -174,7 +182,7 @@ internal fun buildAgentTurnResultFromRawReply(
     val reply = if (
         (
             parsedTodoDrafts.isNotEmpty() ||
-                fallbackTodoDrafts.isNotEmpty() ||
+                permittedFallbackDrafts.isNotEmpty() ||
                 parsedTodoEdits.isNotEmpty()
             ) &&
         finalTodoDrafts.isEmpty() &&

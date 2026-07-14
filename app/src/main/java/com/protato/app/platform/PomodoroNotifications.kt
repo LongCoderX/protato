@@ -1,6 +1,5 @@
-package com.protato.app
+package com.protato.app.platform
 
-import com.protato.app.domain.timer.*
 import android.Manifest
 import android.app.Notification
 import android.app.NotificationChannel
@@ -13,9 +12,16 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.protato.app.MainActivity
+import com.protato.app.PendingPomodoroRecord
+import com.protato.app.R
+import com.protato.app.TimerMode
+import com.protato.app.TimerSession
+import com.protato.app.TodoItem
+import com.protato.app.domain.timer.asClock
+import com.protato.app.domain.timer.remainingSeconds
 
 const val ACTION_START_TIMER_SERVICE = "com.protato.app.action.START_TIMER_SERVICE"
-const val ACTION_STOP_TIMER_SERVICE = "com.protato.app.action.STOP_TIMER_SERVICE"
 const val ACTION_TIMER_COMPLETED = "com.protato.app.action.TIMER_COMPLETED"
 const val ACTION_TODO_REMINDER = "com.protato.app.action.TODO_REMINDER"
 
@@ -31,8 +37,6 @@ class PomodoroNotifications(private val context: Context) {
     private val notificationManager = NotificationManagerCompat.from(context)
 
     fun ensureChannels() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-
         val timerChannel = NotificationChannel(
             TIMER_CHANNEL_ID,
             "番茄计时",
@@ -65,7 +69,7 @@ class PomodoroNotifications(private val context: Context) {
 
     fun buildTimerNotification(session: TimerSession): Notification {
         ensureChannels()
-        val remainingSeconds = session.remainingSeconds()
+        val remainingSeconds = session.remainingSeconds(System.currentTimeMillis())
         val elapsedSeconds = (session.totalSeconds - remainingSeconds).coerceIn(0, session.totalSeconds)
         val openIntent = PendingIntent.getActivity(
             context,
@@ -73,13 +77,6 @@ class PomodoroNotifications(private val context: Context) {
             Intent(context, MainActivity::class.java),
             pendingIntentFlags()
         )
-        val stopIntent = PendingIntent.getService(
-            context,
-            1,
-            Intent(context, PomodoroTimerService::class.java).setAction(ACTION_STOP_TIMER_SERVICE),
-            pendingIntentFlags()
-        )
-
         return NotificationCompat.Builder(context, TIMER_CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_launcher_foreground)
             .setContentTitle(session.mode.notificationTitle())
@@ -94,16 +91,10 @@ class PomodoroNotifications(private val context: Context) {
             .setChronometerCountDown(true)
             .setWhen(session.endsAt)
             .setProgress(session.totalSeconds, elapsedSeconds, false)
-            .addAction(
-                R.drawable.ic_launcher_foreground,
-                "结束",
-                stopIntent
-            )
             .build()
     }
 
     fun showCompletedNotification(record: PendingPomodoroRecord) {
-        if (!canPostNotifications()) return
         ensureChannels()
         val openIntent = PendingIntent.getActivity(
             context,
@@ -121,11 +112,10 @@ class PomodoroNotifications(private val context: Context) {
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setDefaults(Notification.DEFAULT_SOUND)
             .build()
-        notificationManager.notify(COMPLETED_NOTIFICATION_ID, notification)
+        notifyIfAllowed(COMPLETED_NOTIFICATION_ID, notification)
     }
 
     fun showTodoReminder(todo: TodoItem) {
-        if (!canPostNotifications()) return
         ensureChannels()
         val openIntent = PendingIntent.getActivity(
             context,
@@ -143,7 +133,14 @@ class PomodoroNotifications(private val context: Context) {
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setDefaults(Notification.DEFAULT_SOUND)
             .build()
-        notificationManager.notify(TODO_REMINDER_NOTIFICATION_BASE_ID + todo.id.hashCode().absoluteValueMod(100000), notification)
+        notifyIfAllowed(
+            TODO_REMINDER_NOTIFICATION_BASE_ID + todo.id.hashCode().absoluteValueMod(100000),
+            notification
+        )
+    }
+
+    fun showTimerNotification(session: TimerSession) {
+        notifyIfAllowed(TIMER_NOTIFICATION_ID, buildTimerNotification(session))
     }
 
     fun cancelTimer() {
@@ -159,15 +156,20 @@ class PomodoroNotifications(private val context: Context) {
             ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
     }
+
+    private fun notifyIfAllowed(notificationId: Int, notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        notificationManager.notify(notificationId, notification)
+    }
 }
 
 fun Int.absoluteValueMod(mod: Int): Int {
     return (this and Int.MAX_VALUE) % mod
-}
-
-fun TimerSession.remainingSeconds(now: Long = System.currentTimeMillis()): Int {
-    pausedRemainingSeconds?.let { return it.coerceAtLeast(0) }
-    return (((endsAt - now).coerceAtLeast(0L) + 999L) / 1000L).toInt()
 }
 
 fun TimerMode.notificationTitle(): String = when (this) {
@@ -176,10 +178,5 @@ fun TimerMode.notificationTitle(): String = when (this) {
 }
 
 fun pendingIntentFlags(): Int {
-    val mutability = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        PendingIntent.FLAG_IMMUTABLE
-    } else {
-        0
-    }
-    return mutability or PendingIntent.FLAG_UPDATE_CURRENT
+    return PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
 }

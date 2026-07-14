@@ -33,6 +33,12 @@ jobs:
       - name: Make Gradle wrapper executable
         run: chmod +x ./gradlew
 
+      - name: Unit tests
+        run: ./gradlew --no-daemon :app:testDebugUnitTest
+
+      - name: Lint
+        run: ./gradlew --no-daemon :app:lintDebug
+
       - name: Build
         run: ./gradlew --no-daemon :app:assembleDebug
 
