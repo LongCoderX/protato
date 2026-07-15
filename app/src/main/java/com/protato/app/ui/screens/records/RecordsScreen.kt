@@ -81,7 +81,7 @@ internal fun RecordsScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                Header(title = "番茄记录", subtitle = "每次专注结束后的完整内容会沉淀在这里")
+                Header(title = "番茄记录", subtitle = "每次专注结束后的完整内容")
             }
             item {
                 DaySwitcher(

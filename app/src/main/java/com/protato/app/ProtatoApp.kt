@@ -1,5 +1,6 @@
 package com.protato.app
 import com.protato.app.ui.screens.todo.TodoScreen
+import com.protato.app.ui.screens.todo.TodoDetailScreen
 import com.protato.app.ui.screens.templates.TemplateScreen
 import com.protato.app.ui.screens.settings.SettingsScreen
 import com.protato.app.ui.screens.records.RecordsScreen
@@ -8,6 +9,7 @@ import com.protato.app.ui.screens.agent.AgentScreen
 
 
 import com.protato.app.domain.timer.*
+import com.protato.app.domain.todo.toggleSubtask
 import com.protato.app.platform.*
 import com.protato.app.state.createProtatoStateHolder
 import com.protato.app.state.ProtatoEffect
@@ -16,7 +18,6 @@ import com.protato.app.state.ProtatoEventResult
 import com.protato.app.util.*
 import com.protato.app.sync.WebDavBackupController
 import com.protato.app.state.ProtatoAppLifecycle
-import com.protato.app.ui.PaperThemeBackground
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -54,6 +55,7 @@ fun ProtatoApp() {
     val effectRunner = remember { ProtatoEffectRunner(context) }
     val appState = stateHolder.appState
     var selectedTodoId by rememberSaveable { mutableStateOf<String?>(null) }
+    var detailTodoId by rememberSaveable { mutableStateOf<String?>(null) }
     var timerMode by rememberSaveable { mutableStateOf(TimerMode.Focus) }
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
     var agentInput by rememberSaveable { mutableStateOf("") }
@@ -131,7 +133,7 @@ fun ProtatoApp() {
         fontScale = appState.fontScale,
         themeChoice = appState.themeChoice
     ) {
-        var currentTab by rememberSaveable { mutableStateOf(MainTab.Agent) }
+        var currentTab by rememberSaveable { mutableStateOf(MainTab.Todo) }
         var secondaryDestination by rememberSaveable { mutableStateOf<SecondaryDestination?>(null) }
         fun selectTab(tab: MainTab) {
             currentTab = tab
@@ -151,8 +153,7 @@ fun ProtatoApp() {
                     .padding(padding),
                 color = MaterialTheme.colorScheme.background
             ) {
-                PaperThemeBackground(enabled = appState.themeChoice == ProtatoThemeChoice.Paper) {
-                    if (secondaryDestination != null) {
+                if (secondaryDestination != null) {
                         when (secondaryDestination) {
                             SecondaryDestination.Templates -> TemplateScreen(
                                 templates = appState.templates,
@@ -180,6 +181,28 @@ fun ProtatoApp() {
                                 onEvent = ::dispatchEvent,
                                 onBack = { secondaryDestination = null }
                             )
+
+                            SecondaryDestination.TodoDetail -> detailTodoId?.let { todoId ->
+                                appState.todos.firstOrNull { it.id == todoId }?.let { todo ->
+                                    TodoDetailScreen(
+                                        todo = todo,
+                                        onBack = {
+                                            detailTodoId = null
+                                            secondaryDestination = null
+                                        },
+                                        onToggle = { dispatchEvent(ProtatoEvent.ToggleTodo(todo)) },
+                                        onToggleSubtask = { subtaskId ->
+                                            dispatchEvent(ProtatoEvent.UpdateTodo(todo.toggleSubtask(subtaskId)))
+                                        },
+                                        onStartFocus = {
+                                            selectedTodoId = todo.id
+                                            detailTodoId = null
+                                            secondaryDestination = null
+                                            currentTab = MainTab.Focus
+                                        }
+                                    )
+                                }
+                            }
 
                             null -> Unit
                         }
@@ -273,9 +296,14 @@ fun ProtatoApp() {
 
                         MainTab.Todo -> TodoScreen(
                             todos = appState.todos,
+                            records = appState.records,
                             providers = appState.llmProviders,
                             agents = appState.agents,
                             nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
+                            onOpenDetail = { todo ->
+                                detailTodoId = todo.id
+                                secondaryDestination = SecondaryDestination.TodoDetail
+                            },
                             onAdd = { todo ->
                                 dispatchEvent(ProtatoEvent.AddTodo(todo))
                             },
@@ -319,10 +347,16 @@ fun ProtatoApp() {
                         )
 
                         MainTab.More -> MoreScreen(
-                            onOpenSettings = { secondaryDestination = SecondaryDestination.Settings }
+                            onOpenSettings = { secondaryDestination = SecondaryDestination.Settings },
+                            onOpenTemplates = { secondaryDestination = SecondaryDestination.Templates },
+                            nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
+                            todoCount = appState.todos.count { !it.completed },
+                            focusMinutes = appState.records.sumOf { it.focusMinutes },
+                            level = appState.records.size / 5 + 1,
+                            streak = appState.records.map { dayKey(it.endedAt) }.distinct().size,
+                            xp = appState.records.size * 50 + appState.todos.count { it.completed } * 20
                         )
                         }
-                    }
                 }
             }
         }

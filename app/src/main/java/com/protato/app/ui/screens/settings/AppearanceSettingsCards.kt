@@ -260,24 +260,24 @@ private fun ThemeOption(
 ) {
     val (label, colors) = when (themeChoice) {
         ProtatoThemeChoice.Mint -> "薄荷" to listOf(
-            Color(0xFF0D9488),
-            Color(0xFFF97316),
-            Color(0xFFE6F0EC)
+            Color(0xFF3ECF8E),
+            Color(0xFF1C1C1C),
+            Color(0xFF2E2E2E)
         )
         ProtatoThemeChoice.SeaSalt -> "海盐" to listOf(
-            Color(0xFF2563EB),
-            Color(0xFF0F766E),
-            Color(0xFFE8EDF5)
+            Color(0xFF5EC7F2),
+            Color(0xFF1C1C1C),
+            Color(0xFF2E2E2E)
         )
         ProtatoThemeChoice.Berry -> "莓红" to listOf(
-            Color(0xFFBE123C),
-            Color(0xFFB45309),
-            Color(0xFFF3E2E5)
+            Color(0xFFF36B8A),
+            Color(0xFF1C1C1C),
+            Color(0xFF2E2E2E)
         )
         ProtatoThemeChoice.Paper -> "纸感" to listOf(
-            Color(0xFF8EDFC8),
-            Color(0xFFFFFEF8),
-            Color(0xFFE8E5DC)
+            Color(0xFFD8CFAE),
+            Color(0xFF1C1C1C),
+            Color(0xFF2E2E2E)
         )
     }
     val background = if (selected) {

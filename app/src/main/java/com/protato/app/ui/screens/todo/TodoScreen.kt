@@ -10,10 +10,14 @@ import com.protato.app.*
 import com.protato.app.ai.*
 import com.protato.app.util.*
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,9 +25,11 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.background
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -43,6 +49,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -50,20 +57,26 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.protato.app.ui.components.EmptyState
 import com.protato.app.ui.components.Header
+import com.protato.app.ui.components.OutlineIconButton
+import com.protato.app.ui.components.ProtatoPanel
 import com.protato.app.ui.screens.todo.TodoDraftMetadataRow
 import com.protato.app.ui.screens.todo.TodoFilterControls
-import com.protato.app.ui.screens.todo.TodoRow
+import com.protato.app.ui.screens.todo.TodoQuestCard
 import com.protato.app.ui.screens.todo.TodoSectionHeader
 import com.protato.app.ui.screens.todo.TodoSelectionBar
 import com.protato.app.ui.screens.todo.TodoTagFilterDialog
 import java.util.Locale
+import java.time.LocalDate
+import java.time.LocalTime
 
 @Composable
 internal fun TodoScreen(
     todos: List<TodoItem>,
+    records: List<PomodoroRecord>,
     providers: List<LlmProviderSettings>,
     agents: List<AgentSettings>,
     nickname: String,
+    onOpenDetail: (TodoItem) -> Unit,
     onAdd: (TodoItem) -> Unit,
     onToggle: (TodoItem) -> Unit,
     onCompleteWithReview: (TodoItem, TodoCompletionReview) -> Unit,
@@ -89,7 +102,7 @@ internal fun TodoScreen(
             todo.id == selectedId && !todo.completed && todo.dueDate != todayKey
         }
     }
-    var selectedTodoDate by rememberSaveable { mutableStateOf<String?>(null) }
+    var selectedTodoDate by rememberSaveable(todayKey) { mutableStateOf<String?>(todayKey) }
     val availableTags = remember(todos) {
         todos.flatMap { it.tags }
             .distinctBy { it.lowercase(Locale.getDefault()) }
@@ -111,19 +124,24 @@ internal fun TodoScreen(
     val visibleIncompleteTodos = remember(visibleTodos) { visibleTodos.filterNot { it.completed } }
     val visibleCompletedTodos = remember(visibleTodos) { visibleTodos.filter { it.completed } }
     val dateLabel = selectedTodoDate?.let(::formatDayLabel) ?: "收集箱"
+    val totalXp = records.size * 50 + todos.filter { it.completed }.sumOf { it.plannedPomodoros * 20 }
+    val levelSize = 240
+    val level = totalXp / levelSize + 1
+    val levelProgress = (totalXp % levelSize) / levelSize.toFloat()
+    val todayAvailableXp = visibleIncompleteTodos.sumOf { it.plannedPomodoros.coerceAtLeast(1) * 50 }
+    val streakDays = currentStreak(records)
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 20.dp)
+            .padding(horizontal = 16.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 20.dp, bottom = 14.dp),
+                .padding(top = 16.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Header(title = "待办", subtitle = "给每一轮番茄一个明确的对象")
             if (selecting) {
                 TodoSelectionBar(
                     selectedCount = selectedTodoIds.size,
@@ -140,36 +158,62 @@ internal fun TodoScreen(
                     }
                 )
             } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    FilledIconButton(
-                        onClick = {
-                            editingTodo = TodoItem(
-                                id = newId(),
-                                title = "",
-                                dueDate = selectedTodoDate
-                            )
-                        }
-                    ) {
-                        Icon(Icons.Outlined.Add, contentDescription = "新建待办")
-                    }
-                    FilledIconButton(onClick = { showingAiTodo = true }) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_robot_svg),
-                            contentDescription = "AI 待办助手"
+                Header(
+                    title = if (selectedTodoDate == todayKey) "${greetingLabel()}，$nickname" else "任务",
+                    subtitle = "${formatDayLabel(todayKey)} · $nickname",
+                    action = {
+                        OutlineIconButton(
+                            icon = Icons.Outlined.Add,
+                            contentDescription = "新建待办",
+                            onClick = {
+                                editingTodo = TodoItem(id = newId(), title = "", dueDate = selectedTodoDate)
+                            }
+                        )
+                        OutlineIconButton(
+                            icon = Icons.Outlined.SmartToy,
+                            contentDescription = "AI 待办助手",
+                            onClick = { showingAiTodo = true }
                         )
                     }
-                    Text(
-                        "${dateLabel} ${visibleIncompleteTodos.size}/${datedTodos.size}",
-                        modifier = Modifier.weight(1f),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.End,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                )
+                ProtatoPanel(modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("LV $level · 专注者", style = MaterialTheme.typography.labelMedium)
+                            Text(
+                                "${totalXp % levelSize} / $levelSize XP",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(6.dp)
+                                .clip(RoundedCornerShape(999.dp))
+                                .background(MaterialTheme.colorScheme.outline)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth(levelProgress)
+                                    .fillMaxHeight()
+                                    .background(MaterialTheme.colorScheme.primary)
+                            )
+                        }
+                    }
                 }
+                Text(
+                    "${visibleIncompleteTodos.size} 个任务待完成 · 今日可得 $todayAvailableXp XP · 连续 $streakDays 天",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall
+                )
             }
             TodoFilterControls(
                 dateKeys = availableDateKeys,
@@ -212,30 +256,25 @@ internal fun TodoScreen(
                 }
             }
             if (showIncompleteTodos) {
-                items(visibleIncompleteTodos, key = { it.id }) { todo ->
-                    TodoRow(
-                        todo = todo,
-                        selected = todo.id in selectedTodoIds,
-                        selecting = selecting,
-                        onToggle = {
-                            if (!todo.completed && todo.complexity == TodoComplexity.Complex) {
-                                reviewingTodo = todo
-                            } else {
-                                onToggle(todo)
+                items(visibleIncompleteTodos.chunked(2), key = { row -> row.joinToString("|") { it.id } }) { row ->
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { todo ->
+                            Box(Modifier.weight(1f)) {
+                                TodoQuestCard(
+                                    todo = todo,
+                                    selected = todo.id in selectedTodoIds,
+                                    selecting = selecting,
+                                    onOpen = { onOpenDetail(todo) },
+                                    onToggle = {
+                                        if (todo.complexity == TodoComplexity.Complex) reviewingTodo = todo else onToggle(todo)
+                                    },
+                                    onToggleSelected = { selectedTodoIds = selectedTodoIds.toggle(todo.id) },
+                                    onLongPress = { selectedTodoIds = selectedTodoIds + todo.id }
+                                )
                             }
-                        },
-                        onToggleSubtask = { subtaskId ->
-                            onUpdate(todo.toggleSubtask(subtaskId))
-                        },
-                        onEdit = { editingTodo = todo },
-                        onDelete = { onDelete(todo) },
-                        onToggleSelected = {
-                            selectedTodoIds = selectedTodoIds.toggle(todo.id)
-                        },
-                        onLongPress = {
-                            selectedTodoIds = selectedTodoIds + todo.id
                         }
-                    )
+                        if (row.size == 1) Spacer(Modifier.weight(1f))
+                    }
                 }
             }
             if (visibleCompletedTodos.isNotEmpty()) {
@@ -248,24 +287,23 @@ internal fun TodoScreen(
                     )
                 }
                 if (showCompletedTodos) {
-                    items(visibleCompletedTodos, key = { it.id }) { todo ->
-                        TodoRow(
-                            todo = todo,
-                            selected = todo.id in selectedTodoIds,
-                            selecting = selecting,
-                            onToggle = { onToggle(todo) },
-                            onToggleSubtask = { subtaskId ->
-                                onUpdate(todo.toggleSubtask(subtaskId))
-                            },
-                            onEdit = { editingTodo = todo },
-                            onDelete = { onDelete(todo) },
-                            onToggleSelected = {
-                                selectedTodoIds = selectedTodoIds.toggle(todo.id)
-                            },
-                            onLongPress = {
-                                selectedTodoIds = selectedTodoIds + todo.id
+                    items(visibleCompletedTodos.chunked(2), key = { row -> row.joinToString("|") { it.id } }) { row ->
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            row.forEach { todo ->
+                                Box(Modifier.weight(1f)) {
+                                    TodoQuestCard(
+                                        todo = todo,
+                                        selected = todo.id in selectedTodoIds,
+                                        selecting = selecting,
+                                        onOpen = { onOpenDetail(todo) },
+                                        onToggle = { onToggle(todo) },
+                                        onToggleSelected = { selectedTodoIds = selectedTodoIds.toggle(todo.id) },
+                                        onLongPress = { selectedTodoIds = selectedTodoIds + todo.id }
+                                    )
+                                }
                             }
-                        )
+                            if (row.size == 1) Spacer(Modifier.weight(1f))
+                        }
                     }
                 }
             }
@@ -338,6 +376,25 @@ internal fun TodoScreen(
             }
         )
     }
+}
+
+private fun greetingLabel(): String = when (LocalTime.now().hour) {
+    in 5..10 -> "早上好"
+    in 11..13 -> "中午好"
+    in 14..17 -> "下午好"
+    else -> "晚上好"
+}
+
+private fun currentStreak(records: List<PomodoroRecord>): Int {
+    val days = records.map { dayKey(it.endedAt) }.toSet()
+    var cursor = LocalDate.now()
+    if (cursor.toString() !in days) cursor = cursor.minusDays(1)
+    var count = 0
+    while (cursor.toString() in days) {
+        count += 1
+        cursor = cursor.minusDays(1)
+    }
+    return count
 }
 
 @Composable

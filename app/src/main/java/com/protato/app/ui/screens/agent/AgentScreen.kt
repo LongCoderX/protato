@@ -50,6 +50,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.protato.app.ai.LlmChatMessage
 import com.protato.app.ui.components.ChatBubble
+import com.protato.app.ui.components.OutlineIconButton
+import com.protato.app.ui.components.Header
 import com.protato.app.ui.screens.todo.TodoDraftMetadataRow
 
 @Composable
@@ -98,6 +100,25 @@ internal fun AgentScreen(
             .padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        Header(
+            title = "助理",
+            subtitle = "任务与复盘伙伴",
+            action = {
+                OutlineIconButton(
+                    icon = Icons.Outlined.RestartAlt,
+                    contentDescription = "新开对话",
+                    onClick = {
+                        if (canStartNewConversation) {
+                            onInputChange("")
+                            turnController.cancel()
+                            onSessionStateChange(sessionState.reset())
+                            onErrorTextChange(null)
+                            onEvent(ProtatoEvent.ClearAgentMessages)
+                        }
+                    }
+                )
+            }
+        )
         AgentTodoContextSelector(
             todos = appState.todos.filterNot { it.completed },
             selectedTodoId = contextTodoId,
@@ -169,18 +190,6 @@ internal fun AgentScreen(
                 minLines = 1,
                 maxLines = 4
             )
-            IconButton(
-                enabled = canStartNewConversation,
-                onClick = {
-                    onInputChange("")
-                    turnController.cancel()
-                    onSessionStateChange(sessionState.reset())
-                    onErrorTextChange(null)
-                    onEvent(ProtatoEvent.ClearAgentMessages)
-                }
-            ) {
-                Icon(Icons.Outlined.RestartAlt, contentDescription = "新开对话")
-            }
             FilledIconButton(
                 enabled = input.isNotBlank() && !loading,
                 onClick = {

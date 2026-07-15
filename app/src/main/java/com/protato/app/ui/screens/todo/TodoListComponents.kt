@@ -30,14 +30,15 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.outlined.Timer
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -179,6 +180,88 @@ fun TodoSelectionBar(
                 Icons.Outlined.Delete,
                 contentDescription = "删除所选待办",
                 tint = MaterialTheme.colorScheme.error
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun TodoQuestCard(
+    todo: TodoItem,
+    selected: Boolean,
+    selecting: Boolean,
+    onOpen: () -> Unit,
+    onToggle: () -> Unit,
+    onToggleSelected: () -> Unit,
+    onLongPress: () -> Unit
+) {
+    val baseColor = when (Math.abs(todo.id.hashCode()) % 4) {
+        0 -> MaterialTheme.colorScheme.surfaceVariant
+        1 -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.78f)
+        2 -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.72f)
+        else -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.42f)
+    }
+    val xp = (todo.plannedPomodoros.coerceAtLeast(1) * 50)
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(132.dp)
+            .combinedClickable(
+                onClick = { if (selecting) onToggleSelected() else onOpen() },
+                onLongClick = onLongPress
+            ),
+        shape = RoundedCornerShape(8.dp),
+        color = if (selected) MaterialTheme.colorScheme.primaryContainer else baseColor,
+        border = BorderStroke(
+            1.dp,
+            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    onClick = { if (selecting) onToggleSelected() else onToggle() },
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f)
+                ) {
+                    Icon(
+                        if (todo.completed) Icons.Outlined.Check else Icons.Outlined.Timer,
+                        contentDescription = if (todo.completed) "已完成" else "专注任务",
+                        tint = if (todo.completed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(7.dp).size(16.dp)
+                    )
+                }
+                Text(
+                    "+$xp XP",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(
+                todo.title.ifBlank { "未命名任务" },
+                style = MaterialTheme.typography.titleSmall,
+                color = if (todo.completed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                textDecoration = if (todo.completed) TextDecoration.LineThrough else TextDecoration.None,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                when {
+                    todo.dueDate != null -> "${todo.plannedPomodoros} 个番茄 · ${formatDayLabel(todo.dueDate)}"
+                    else -> "${todo.plannedPomodoros} 个番茄"
+                },
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
@@ -409,8 +492,7 @@ fun TodoRow(
             TodoSwipeBackground(dismissValue = dismissState.targetValue)
         }
     ) {
-        ElevatedCard(
-            shape = RoundedCornerShape(8.dp),
+        Surface(
             modifier = Modifier
                 .fillMaxWidth()
                 .combinedClickable(
@@ -423,14 +505,16 @@ fun TodoRow(
                     },
                     onLongClick = onLongPress
                 ),
-            colors = CardDefaults.elevatedCardColors(
-                containerColor = if (selected) {
-                    MaterialTheme.colorScheme.primaryContainer
-                } else {
-                    MaterialTheme.colorScheme.surface
-                }
-            ),
-            elevation = CardDefaults.elevatedCardElevation(defaultElevation = 0.dp)
+            shape = RoundedCornerShape(8.dp),
+            color = if (selected) {
+                MaterialTheme.colorScheme.primaryContainer
+            } else {
+                MaterialTheme.colorScheme.surface
+            },
+            border = BorderStroke(
+                1.dp,
+                if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+            )
         ) {
             Row(
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),

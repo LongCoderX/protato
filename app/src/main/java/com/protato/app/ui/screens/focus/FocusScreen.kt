@@ -49,7 +49,7 @@ internal fun FocusScreen(
             modifier = Modifier.fillMaxSize().padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Header(title = "Protato", subtitle = "番茄时钟、任务和复盘记录都在一条线上")
+            Header(title = "专注", subtitle = "番茄时钟 · 让下一步清晰")
             TimerCard(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 mode = timerMode,
