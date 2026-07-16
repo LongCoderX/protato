@@ -4,6 +4,7 @@ import com.protato.app.ui.screens.todo.TodoDatePickerDialog
 import com.protato.app.*
 
 import com.protato.app.ai.*
+import com.protato.app.domain.todo.overdueBefore
 import com.protato.app.util.*
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,8 +56,8 @@ internal fun RecordsScreen(
     var choosingRecordDate by rememberSaveable { mutableStateOf(false) }
     val todayKey = dayKey(System.currentTimeMillis())
     var selectedDayKey by rememberSaveable { mutableStateOf(todayKey) }
-    val availableDayKeys = remember(records, summaries, todayKey, selectedDayKey) {
-        (records.map { dayKey(it.endedAt) } + summaries.map { it.dayKey } + todayKey + selectedDayKey)
+    val availableDayKeys = remember(records, summaries, todos, todayKey, selectedDayKey) {
+        (records.map { dayKey(it.endedAt) } + summaries.map { it.dayKey } + todos.mapNotNull { it.dueDate } + todayKey + selectedDayKey)
             .distinct()
             .sortedDescending()
     }
@@ -72,6 +73,8 @@ internal fun RecordsScreen(
     val selectedDayRecords = records
         .filter { dayKey(it.endedAt) == effectiveSelectedDayKey }
         .sortedBy { it.endedAt }
+    val selectedDayTodos = todos.filter { it.dueDate == effectiveSelectedDayKey }
+    val selectedDayOverdueTodos = todos.overdueBefore(effectiveSelectedDayKey)
     val selectedDaySummary = summaries.firstOrNull { it.dayKey == effectiveSelectedDayKey }
 
     Box(Modifier.fillMaxSize()) {
@@ -100,14 +103,15 @@ internal fun RecordsScreen(
             item {
                 DailySummaryCard(
                     title = "${formatDayLabel(effectiveSelectedDayKey)} 总结",
-                    statsText = "${selectedDayRecords.size} 次专注 · ${selectedDayRecords.sumOf { it.focusMinutes }} 分钟 · ${selectedDayRecords.map { it.todoTitle }.distinct().size} 个对象",
+                    statsText = "${selectedDayRecords.size} 次专注 · ${selectedDayRecords.sumOf { it.focusMinutes }} 分钟 · ${selectedDayTodos.count { it.completed }}/${selectedDayTodos.size} 任务完成 · ${selectedDayOverdueTodos.size} 逾期",
                     hasSummary = selectedDaySummary != null,
-                    hasRecords = selectedDayRecords.isNotEmpty(),
+                    hasActivity = selectedDayRecords.isNotEmpty() || selectedDayTodos.isNotEmpty() || selectedDayOverdueTodos.isNotEmpty(),
                     loading = generatingSummary,
                     onGenerate = {
                         summaryController.submit(
                             dayKey = effectiveSelectedDayKey,
                             records = selectedDayRecords,
+                            todos = todos,
                             templates = templates,
                             providers = providers,
                             agents = agents,

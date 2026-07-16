@@ -76,6 +76,7 @@ internal fun TodoScreen(
     providers: List<LlmProviderSettings>,
     agents: List<AgentSettings>,
     nickname: String,
+    lastOverdueTodoDecisionDay: String?,
     onOpenDetail: (TodoItem) -> Unit,
     onAdd: (TodoItem) -> Unit,
     onToggle: (TodoItem) -> Unit,
@@ -83,6 +84,7 @@ internal fun TodoScreen(
     onDelete: (TodoItem) -> Unit,
     onUpdate: (TodoItem) -> Unit,
     onMoveManyToToday: (Set<String>) -> Unit,
+    onResolveOverdueTodos: (Set<String>, Boolean) -> Unit,
     onDeleteMany: (Set<String>) -> Unit,
     onAddMany: (List<TodoItem>) -> Unit
 ) {
@@ -97,6 +99,7 @@ internal fun TodoScreen(
     var showCompletedTodos by rememberSaveable { mutableStateOf(false) }
     val selecting = selectedTodoIds.isNotEmpty()
     val todayKey = dayKey(System.currentTimeMillis())
+    val overdueTodos = remember(todos, todayKey) { todos.overdueBefore(todayKey) }
     val canMoveSelectionToToday = selectedTodoIds.any { selectedId ->
         todos.any { todo ->
             todo.id == selectedId && !todo.completed && todo.dueDate != todayKey
@@ -373,6 +376,40 @@ internal fun TodoScreen(
             onSelected = { tag ->
                 selectedTag = tag
                 showingTagFilter = false
+            }
+        )
+    }
+
+    if (overdueTodos.isNotEmpty() && lastOverdueTodoDecisionDay != todayKey) {
+        val overdueTodoIds = overdueTodos.mapTo(mutableSetOf(), TodoItem::id)
+        AlertDialog(
+            onDismissRequest = {},
+            confirmButton = {
+                TextButton(onClick = { onResolveOverdueTodos(overdueTodoIds, true) }) {
+                    Text("移动到今天")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { onResolveOverdueTodos(overdueTodoIds, false) }) {
+                    Text("保留原日期")
+                }
+            },
+            title = { Text("还有未完成任务") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("以下 ${overdueTodos.size} 个任务已经过期，是否移动到今天？")
+                    overdueTodos.take(5).forEach { todo ->
+                        Text("• ${todo.title} · ${todo.dueDate?.let(::formatDayLabel).orEmpty()}")
+                    }
+                    if (overdueTodos.size > 5) {
+                        Text("另有 ${overdueTodos.size - 5} 个未完成任务")
+                    }
+                    Text(
+                        "保留原日期后，任务仍是未完成状态，并会进入每日统计。",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         )
     }

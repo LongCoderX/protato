@@ -107,6 +107,39 @@ class ProtatoStoreTest {
     }
 
     @Test
+    fun loadRepairsAndPersistsLegacyApiKeyMaskSuffix() {
+        val stateFile = tempStateFile()
+        stateFile.writeText(
+            AppStateJsonCodec.encode(
+                AppState(
+                    llmProviders = listOf(
+                        LlmProviderSettings(
+                            id = "provider-1",
+                            providerKey = "deepseek",
+                            name = "DeepSeek",
+                            modelName = "deepseek-chat",
+                            endpoint = "https://api.deepseek.com"
+                        )
+                    )
+                )
+            )
+        )
+        val secretStore = RecordingSecretStore(
+            ProtatoSecrets(llmProviderApiKeys = mapOf("provider-1" to "real-secret***"))
+        )
+        val store = ProtatoStore(stateFile, secretStore = secretStore)
+
+        val result = store.loadResult()
+        val loaded = result.state
+
+        assertEquals("real-secret", loaded.llmProviders.single().apiKey)
+        assertEquals("real-secret", secretStore.current.llmProviderApiKeys["provider-1"])
+        assertTrue(result is ProtatoStoreLoadResult.Recovered)
+        result as ProtatoStoreLoadResult.Recovered
+        assertTrue(result.messages.any { it.contains("mask suffixes") })
+    }
+
+    @Test
     fun loadResultReturnsRecoveredForLegacyStateJson() {
         val file = tempStateFile()
         file.writeText(

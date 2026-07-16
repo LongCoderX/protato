@@ -393,4 +393,44 @@ class AgentTurnServiceTest {
 
         assertEquals(listOf(allowed.id), result.todoEdits.map { it.id })
     }
+
+    @Test
+    fun updateIntentCannotClaimSuccessWithoutExecutableEditDraft() {
+        val existing = TodoItem(id = "todo-1", title = "凌晨前睡觉")
+        val result = buildAgentTurnResultFromRawReply(
+            rawReply = "已经帮你把提醒时间修改为 23:30。",
+            fallbackTodoDrafts = emptyList(),
+            existingTodos = listOf(existing),
+            handledTodoDraftKeys = emptySet(),
+            handledTodoEditKeys = emptySet(),
+            allowTodoActions = true,
+            allowedTodoIds = setOf(existing.id),
+            requireTodoEdits = true
+        )
+
+        assertTrue(result.todoEdits.isEmpty())
+        assertTrue(result.reply.contains("没有修改任何任务"))
+        assertTrue("已经帮你" !in result.reply)
+    }
+
+    @Test
+    fun updateIntentKeepsValidExecutableEditDraft() {
+        val existing = TodoItem(id = "todo-1", title = "凌晨前睡觉")
+        val result = buildAgentTurnResultFromRawReply(
+            rawReply = """
+                请确认修改。
+                {"tool":"propose_todo_updates","edits":[{"id":"todo-1","title":"十一点半前睡觉"}]}
+            """.trimIndent(),
+            fallbackTodoDrafts = emptyList(),
+            existingTodos = listOf(existing),
+            handledTodoDraftKeys = emptySet(),
+            handledTodoEditKeys = emptySet(),
+            allowTodoActions = true,
+            allowedTodoIds = setOf(existing.id),
+            requireTodoEdits = true
+        )
+
+        assertEquals("十一点半前睡觉", result.todoEdits.single().title)
+        assertEquals("请确认修改。", result.reply)
+    }
 }

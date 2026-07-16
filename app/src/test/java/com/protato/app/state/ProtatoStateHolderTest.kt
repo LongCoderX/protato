@@ -3,6 +3,7 @@ package com.protato.app.state
 import com.protato.app.AppState
 import com.protato.app.AppStateUpdateResult
 import com.protato.app.AgentSettings
+import com.protato.app.AgentDataPermissions
 import com.protato.app.DailySummary
 import com.protato.app.DEFAULT_NICKNAME
 import com.protato.app.FieldAnswer
@@ -11,6 +12,7 @@ import com.protato.app.PendingPomodoroRecord
 import com.protato.app.RecordTemplate
 import com.protato.app.PomodoroRecord
 import com.protato.app.ProtatoStoreLoadResult
+import com.protato.app.ProfileAvatarStyle
 import com.protato.app.TimerMode
 import com.protato.app.TimerSession
 import com.protato.app.TodoCompletionReview
@@ -151,6 +153,43 @@ class ProtatoStateHolderTest {
     }
 
     @Test
+    fun dispatchResolveOverdueTodosMovesOpenTodosAndRecordsPromptDay() {
+        val yesterday = "2026-06-15"
+        val openTodo = TodoItem(id = "todo-1", title = "昨天未完成", dueDate = yesterday)
+        val completedTodo = TodoItem(id = "todo-2", title = "昨天已完成", completed = true, dueDate = yesterday)
+        val holder = testHolder(AppState(todos = listOf(openTodo, completedTodo)))
+
+        holder.dispatch(
+            ProtatoEvent.ResolveOverdueTodos(
+                todoIds = setOf(openTodo.id, completedTodo.id),
+                moveToToday = true
+            )
+        )
+
+        assertEquals(dayKey(FIXED_NOW_MILLIS), holder.appState.todos[0].dueDate)
+        assertEquals(yesterday, holder.appState.todos[1].dueDate)
+        assertEquals(dayKey(FIXED_NOW_MILLIS), holder.appState.lastOverdueTodoDecisionDay)
+    }
+
+    @Test
+    fun dispatchResolveOverdueTodosKeepsOpenTodosWhenMoveIsDeclined() {
+        val yesterday = "2026-06-15"
+        val openTodo = TodoItem(id = "todo-1", title = "昨天未完成", dueDate = yesterday)
+        val holder = testHolder(AppState(todos = listOf(openTodo)))
+
+        holder.dispatch(
+            ProtatoEvent.ResolveOverdueTodos(
+                todoIds = setOf(openTodo.id),
+                moveToToday = false
+            )
+        )
+
+        assertEquals(openTodo, holder.appState.todos.single())
+        assertEquals(false, holder.appState.todos.single().completed)
+        assertEquals(dayKey(FIXED_NOW_MILLIS), holder.appState.lastOverdueTodoDecisionDay)
+    }
+
+    @Test
     fun dispatchUpdateRecordReplacesMatchingRecord() {
         val original = testRecord(id = "record-1", title = "旧标题")
         val other = testRecord(id = "record-2", title = "其他标题")
@@ -229,6 +268,15 @@ class ProtatoStateHolderTest {
     }
 
     @Test
+    fun dispatchUpdateAvatarStylePersistsSelection() {
+        val holder = testHolder()
+
+        holder.dispatch(ProtatoEvent.UpdateAvatarStyle(ProfileAvatarStyle.Trophy))
+
+        assertEquals(ProfileAvatarStyle.Trophy, holder.appState.avatarStyle)
+    }
+
+    @Test
     fun dispatchUpdateFontScaleCoercesRange() {
         val holder = testHolder()
 
@@ -245,6 +293,16 @@ class ProtatoStateHolderTest {
         holder.dispatch(ProtatoEvent.UpsertLlmProvider(provider))
 
         assertEquals(listOf(provider), holder.appState.llmProviders)
+    }
+
+    @Test
+    fun dispatchUpsertLlmProviderRemovesLegacyMaskSuffix() {
+        val provider = testProvider(id = "provider-1").copy(apiKey = "real-secret***")
+        val holder = testHolder(AppState(llmProviders = emptyList()))
+
+        holder.dispatch(ProtatoEvent.UpsertLlmProvider(provider))
+
+        assertEquals("real-secret", holder.appState.llmProviders.single().apiKey)
     }
 
     @Test
@@ -271,6 +329,20 @@ class ProtatoStateHolderTest {
         holder.dispatch(ProtatoEvent.SelectRecordPolishProvider("provider-1"))
 
         assertEquals("provider-1", holder.appState.recordPolishProviderId)
+    }
+
+    @Test
+    fun dispatchUpdateAgentPersistsProviderAndToolPermissions() {
+        val agent = AgentSettings(
+            id = "agent-unified",
+            providerId = "provider-1",
+            permissions = AgentDataPermissions(dailyRecords = true, todos = false, templates = true)
+        )
+        val holder = testHolder(AppState(agents = listOf(AgentSettings(id = agent.id))))
+
+        holder.dispatch(ProtatoEvent.UpdateAgent(agent))
+
+        assertEquals(agent, holder.appState.agents.single())
     }
 
     @Test

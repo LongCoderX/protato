@@ -57,4 +57,40 @@ class AppStateRepositoryTest {
         assertNotNull(finalState.pendingRecord)
         assertEquals("todo-1", finalState.pendingRecord?.todoId)
     }
+
+    @Test
+    fun mergePreservesLocallyChangedAvatarStyle() {
+        val base = AppState(avatarStyle = ProfileAvatarStyle.Focus)
+        val local = base.copy(avatarStyle = ProfileAvatarStyle.Rocket)
+        val latest = base.copy(nickname = "后台更新")
+
+        val merged = mergeAppStateChanges(base, local, latest)
+
+        assertEquals(ProfileAvatarStyle.Rocket, merged.avatarStyle)
+        assertEquals("后台更新", merged.nickname)
+    }
+
+    @Test
+    fun mergeUsesLatestAvatarStyleWhenLocalDidNotChangeIt() {
+        val base = AppState(avatarStyle = ProfileAvatarStyle.Focus)
+        val local = base.copy(nickname = "前台更新")
+        val latest = base.copy(avatarStyle = ProfileAvatarStyle.Trophy)
+
+        val merged = mergeAppStateChanges(base, local, latest)
+
+        assertEquals(ProfileAvatarStyle.Trophy, merged.avatarStyle)
+        assertEquals("前台更新", merged.nickname)
+    }
+
+    @Test
+    fun mergePreservesLocallyHandledOverduePromptDay() {
+        val base = AppState(lastOverdueTodoDecisionDay = "2026-07-15")
+        val local = base.copy(lastOverdueTodoDecisionDay = "2026-07-16")
+        val latest = base.copy(nickname = "后台更新")
+
+        val merged = mergeAppStateChanges(base, local, latest)
+
+        assertEquals("2026-07-16", merged.lastOverdueTodoDecisionDay)
+        assertEquals("后台更新", merged.nickname)
+    }
 }

@@ -34,6 +34,7 @@ internal object AppStateJsonCodec {
             pendingRecord = root.optJSONObject("pendingRecord")?.toPendingRecord(),
             projectRevision = root.optInt("projectRevision", 1).coerceAtLeast(1),
             nickname = root.optString("nickname", DEFAULT_NICKNAME).ifBlank { DEFAULT_NICKNAME },
+            avatarStyle = root.optString("avatarStyle").toProfileAvatarStyle(),
             llmProviders = llmProviders.ifEmpty {
                 defaultLlmProviders().withLegacyLlmImport(legacyLlmImport)
             },
@@ -48,6 +49,8 @@ internal object AppStateJsonCodec {
                 )?.toWebDavBackupSettings()
                 ?: WebDavBackupSettings(),
             recordPolishProviderId = root.optString("recordPolishProviderId"),
+            lastOverdueTodoDecisionDay = root.optString("lastOverdueTodoDecisionDay")
+                .takeIf { it.isNotBlank() },
             fontScale = root.optDouble("fontScale", 1.0).toFloat().coerceIn(0.85f, 1.3f),
             themeChoice = root.optString("themeChoice").toProtatoThemeChoice()
         )
@@ -67,12 +70,14 @@ internal object AppStateJsonCodec {
             .put("pendingRecord", state.pendingRecord?.toJson() ?: JSONObject.NULL)
             .put("projectRevision", state.projectRevision)
             .put("nickname", state.nickname)
+            .put("avatarStyle", state.avatarStyle.name)
             .put("llmProviders", state.llmProviders.toJsonArray { it.toJson() })
             .put("agents", state.agents.toJsonArray { it.toJson() })
             .put("agentMessages", state.agentMessages.toJsonArray { it.toJson() })
             .put("agentMemory", state.agentMemory)
             .put("webDavBackup", state.webDavBackup.toJson())
             .put("recordPolishProviderId", state.recordPolishProviderId)
+            .put("lastOverdueTodoDecisionDay", state.lastOverdueTodoDecisionDay ?: "")
             .put("fontScale", state.fontScale.toDouble())
             .put("themeChoice", state.themeChoice.name)
             .toString(2)
@@ -92,7 +97,8 @@ private fun JSONArray.toTodos(): List<TodoItem> = mapObjects { item ->
         complexity = item.optString("complexity").toTodoComplexity(),
         completionReview = item.optJSONObject("completionReview")?.toTodoCompletionReview(),
         subtasks = item.optJSONArray("subtasks")?.toTodoSubtasks().orEmpty(),
-        summary = item.optString("summary")
+        summary = item.optString("summary"),
+        description = item.optString("description")
     )
 }.filter { it.id.isNotBlank() && it.title.isNotBlank() }
 
@@ -110,6 +116,10 @@ private fun String.toTodoComplexity(): TodoComplexity {
 
 private fun String.toProtatoThemeChoice(): ProtatoThemeChoice {
     return runCatching { ProtatoThemeChoice.valueOf(this) }.getOrDefault(ProtatoThemeChoice.Mint)
+}
+
+private fun String.toProfileAvatarStyle(): ProfileAvatarStyle {
+    return runCatching { ProfileAvatarStyle.valueOf(this) }.getOrDefault(ProfileAvatarStyle.Focus)
 }
 
 private fun JSONObject.toTodoCompletionReview(): TodoCompletionReview? {
@@ -235,13 +245,20 @@ private fun JSONObject.toLlmProviderSettings(): LlmProviderSettings {
         providerKey = providerKey,
         name = optString("name"),
         modelName = optString("modelName"),
-        endpoint = if (providerKey == "minimax" && endpoint.trimEnd('/') == "https://api.minimax.io") {
-            "https://api.minimax.io/v1"
-        } else {
-            endpoint
-        },
+        endpoint = normalizeProviderEndpoint(providerKey, endpoint),
         apiKey = optString("apiKey")
     )
+}
+
+private fun normalizeProviderEndpoint(providerKey: String, endpoint: String): String {
+    if (providerKey != "minimax") return endpoint
+    return when (endpoint.trim().trimEnd('/')) {
+        "https://api.minimax.com",
+        "https://api.minimax.com/v1",
+        "https://api.minimaxi.com" -> "https://api.minimaxi.com/v1"
+        "https://api.minimax.io" -> "https://api.minimax.io/v1"
+        else -> endpoint
+    }
 }
 
 private fun JSONObject.toEncouragerAgentSettings(): EncouragerAgentSettings {
@@ -302,6 +319,7 @@ private fun TodoItem.toJson(): JSONObject = JSONObject()
     .put("completionReview", completionReview?.toJson() ?: JSONObject.NULL)
     .put("subtasks", subtasks.toJsonArray { it.toJson() })
     .put("summary", summary)
+    .put("description", description)
 
 private fun TodoSubtask.toJson(): JSONObject = JSONObject()
     .put("id", id)
@@ -447,12 +465,7 @@ private fun List<AgentSettings>.toUnifiedAgents(): List<AgentSettings> {
     if (unified != null) {
         return listOf(
             unified.copy(
-                name = "对话",
-                permissions = unified.permissions.copy(
-                    dailyRecords = true,
-                    todos = true,
-                    templates = true
-                )
+                name = unified.name.ifBlank { "对话" }
             )
         )
     }

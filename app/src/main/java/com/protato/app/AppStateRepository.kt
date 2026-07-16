@@ -92,6 +92,7 @@ internal fun mergeAppStateChanges(
         pendingRecord = localOrLatest(base.pendingRecord, local.pendingRecord, latest.pendingRecord),
         projectRevision = latest.projectRevision,
         nickname = localOrLatest(base.nickname, local.nickname, latest.nickname),
+        avatarStyle = localOrLatest(base.avatarStyle, local.avatarStyle, latest.avatarStyle),
         llmProviders = localOrLatest(base.llmProviders, local.llmProviders, latest.llmProviders),
         agents = localOrLatest(base.agents, local.agents, latest.agents),
         agentMessages = localOrLatest(base.agentMessages, local.agentMessages, latest.agentMessages),
@@ -101,6 +102,11 @@ internal fun mergeAppStateChanges(
             base.recordPolishProviderId,
             local.recordPolishProviderId,
             latest.recordPolishProviderId
+        ),
+        lastOverdueTodoDecisionDay = localOrLatest(
+            base.lastOverdueTodoDecisionDay,
+            local.lastOverdueTodoDecisionDay,
+            latest.lastOverdueTodoDecisionDay
         ),
         fontScale = localOrLatest(base.fontScale, local.fontScale, latest.fontScale),
         themeChoice = localOrLatest(base.themeChoice, local.themeChoice, latest.themeChoice)

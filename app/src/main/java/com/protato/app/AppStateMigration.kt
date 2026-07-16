@@ -2,7 +2,7 @@ package com.protato.app
 
 import org.json.JSONObject
 
-internal const val CURRENT_APP_STATE_SCHEMA_VERSION = 2
+internal const val CURRENT_APP_STATE_SCHEMA_VERSION = 5
 
 internal data class AppStateMigrationReport(
     val messages: List<String> = emptyList()

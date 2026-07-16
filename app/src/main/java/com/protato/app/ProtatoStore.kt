@@ -70,11 +70,29 @@ class ProtatoStore internal constructor(
     private fun decodeStateFile(source: File): Result<DecodedState> = runCatching {
         val rawJson = source.readText()
         val migrationReport = AppStateMigration.inspect(rawJson)
+        val loadedSecrets = secretStore.load()
+        val sanitizedSecrets = loadedSecrets.sanitizeLegacyApiKeys()
+        val secretMigrationMessages = if (sanitizedSecrets != loadedSecrets) {
+            runCatching { secretStore.save(sanitizedSecrets) }.fold(
+                onSuccess = { listOf("Removed legacy API key mask suffixes from encrypted secrets.") },
+                onFailure = { emptyList() }
+            )
+        } else {
+            emptyList()
+        }
         DecodedState(
-            state = AppStateJsonCodec.decode(rawJson).withSecrets(secretStore.load()),
-            messages = migrationReport.messages
+            state = AppStateJsonCodec.decode(rawJson).withSecrets(sanitizedSecrets),
+            messages = migrationReport.messages + secretMigrationMessages
         )
     }
+}
+
+private fun ProtatoSecrets.sanitizeLegacyApiKeys(): ProtatoSecrets {
+    return copy(
+        llmProviderApiKeys = llmProviderApiKeys.mapValues { (_, apiKey) ->
+            sanitizeLegacyApiKey(apiKey)
+        }.filterValues { it.isNotBlank() }
+    )
 }
 
 private data class DecodedState(
@@ -138,8 +156,11 @@ private fun File.backupFile(): File = File(parentFile, STATE_BACKUP_FILE_NAME)
 private fun AppState.toSecrets(): ProtatoSecrets {
     return ProtatoSecrets(
         llmProviderApiKeys = llmProviders
-            .filter { it.id.isNotBlank() && it.apiKey.isNotBlank() }
-            .associate { it.id to it.apiKey },
+            .mapNotNull { provider ->
+                val apiKey = sanitizeLegacyApiKey(provider.apiKey)
+                if (provider.id.isBlank() || apiKey.isBlank()) null else provider.id to apiKey
+            }
+            .toMap(),
         webDavAuthToken = webDavBackup.authToken
     )
 }
@@ -154,7 +175,11 @@ internal fun AppState.withoutSecrets(): AppState {
 private fun AppState.withSecrets(secrets: ProtatoSecrets): AppState {
     return copy(
         llmProviders = llmProviders.map { provider ->
-            provider.copy(apiKey = secrets.llmProviderApiKeys[provider.id] ?: provider.apiKey)
+            provider.copy(
+                apiKey = sanitizeLegacyApiKey(
+                    secrets.llmProviderApiKeys[provider.id] ?: provider.apiKey
+                )
+            )
         },
         webDavBackup = webDavBackup.copy(
             authToken = secrets.webDavAuthToken.ifBlank { webDavBackup.authToken }

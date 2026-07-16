@@ -22,17 +22,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.automirrored.outlined.Send
-import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.RestartAlt
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -266,65 +262,6 @@ internal fun AgentTodoContextSelector(
                         )
                     }
                 )
-            }
-        }
-    }
-}
-
-@Composable
-internal fun AgentDayCard(
-    todayKey: String,
-    todos: List<TodoItem>,
-    records: List<PomodoroRecord>,
-    backingUp: Boolean,
-    backupEnabled: Boolean,
-    onSummary: () -> Unit,
-    onBackup: () -> Unit
-) {
-    val totalMinutes = records.sumOf { it.focusMinutes }
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(formatDayLabel(todayKey), fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "${todos.size} 个待办 · ${records.size} 个番茄 · $totalMinutes 分钟",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                IconButton(
-                    enabled = backupEnabled && !backingUp,
-                    onClick = onBackup
-                ) {
-                    Icon(Icons.Outlined.CloudUpload, contentDescription = "备份")
-                }
-            }
-            if (todos.isNotEmpty()) {
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(todos.take(6), key = { it.id }) { todo ->
-                        AssistChip(
-                            onClick = { },
-                            label = {
-                                Text(
-                                    todo.title,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        )
-                    }
-                }
-            }
-            OutlinedButton(
-                enabled = records.isNotEmpty(),
-                onClick = onSummary,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("生成今日总结")
             }
         }
     }

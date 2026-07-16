@@ -48,7 +48,8 @@ class AppStateJsonCodecTest {
                         TodoSubtask(id = "sub-1", title = "拆 codec", completed = true),
                         TodoSubtask(id = "sub-2", title = "补测试")
                     ),
-                    summary = "1/2 个子任务完成。下一步：补测试。"
+                    summary = "1/2 个子任务完成。下一步：补测试。",
+                    description = "收敛状态持久化边界并补齐失败恢复测试。"
                 )
             ),
             templates = listOf(template),
@@ -98,6 +99,7 @@ class AppStateJsonCodecTest {
             ),
             projectRevision = 12,
             nickname = "测试用户",
+            avatarStyle = ProfileAvatarStyle.Rocket,
             llmProviders = listOf(
                 LlmProviderSettings(
                     id = "provider-1",
@@ -142,6 +144,7 @@ class AppStateJsonCodecTest {
                 authToken = "sync-token"
             ),
             recordPolishProviderId = "provider-1",
+            lastOverdueTodoDecisionDay = "2026-07-16",
             fontScale = 1.15f
         )
 
@@ -167,7 +170,56 @@ class AppStateJsonCodecTest {
         assertEquals("agent-welcome", decoded.agentMessages.single().id)
         assertEquals("assistant", decoded.agentMessages.single().role)
         assertEquals(defaultAgentConversation().single().content, decoded.agentMessages.single().content)
+        assertEquals(ProfileAvatarStyle.Focus, decoded.avatarStyle)
         assertEquals(WebDavBackupSettings(), decoded.webDavBackup)
+        assertEquals(null, decoded.lastOverdueTodoDecisionDay)
+    }
+
+    @Test
+    fun decodePreservesConfiguredAgentPermissions() {
+        val rawJson = """
+            {
+              "schemaVersion": 2,
+              "agents": [{
+                "id": "agent-unified",
+                "enabled": true,
+                "name": "我的助理",
+                "providerId": "provider-openai",
+                "prompt": "只做必要操作",
+                "permissions": {
+                  "dailyRecords": true,
+                  "todos": false,
+                  "templates": false
+                }
+              }]
+            }
+        """.trimIndent()
+
+        val decoded = AppStateJsonCodec.decode(rawJson)
+
+        assertEquals("我的助理", decoded.agents.single().name)
+        assertEquals(AgentDataPermissions(dailyRecords = true), decoded.agents.single().permissions)
+        assertEquals(ProfileAvatarStyle.Focus, decoded.avatarStyle)
+    }
+
+    @Test
+    fun decodeRepairsInvalidLegacyMiniMaxEndpoint() {
+        val decoded = AppStateJsonCodec.decode(
+            """
+            {
+              "schemaVersion": 3,
+              "llmProviders": [{
+                "id": "provider-minimax",
+                "providerKey": "minimax",
+                "name": "MiniMax",
+                "modelName": "MiniMax-M3",
+                "endpoint": "https://api.minimax.com"
+              }]
+            }
+            """.trimIndent()
+        )
+
+        assertEquals("https://api.minimaxi.com/v1", decoded.llmProviders.single().endpoint)
     }
 
     @Test

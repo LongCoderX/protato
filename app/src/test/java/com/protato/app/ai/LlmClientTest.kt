@@ -16,12 +16,14 @@ class LlmClientTest {
             name = "Test",
             endpoint = "http://example.com",
             modelName = "model",
-            apiKey = "key"
+            apiKey = "test-key-123"
         )
         val httpsProvider = httpProvider.copy(endpoint = "https://example.com")
 
         assertFalse(httpProvider.isConfiguredForChat())
         assertTrue(httpsProvider.isConfiguredForChat())
+        assertFalse(httpsProvider.copy(apiKey = "***").isConfiguredForChat())
+        assertFalse(httpsProvider.copy(apiKey = "test***key").isConfiguredForChat())
     }
 
     @Test
@@ -51,6 +53,37 @@ class LlmClientTest {
 
         assertTrue(error is IllegalArgumentException)
         assertTrue(error?.message.orEmpty().contains("HTTPS"))
+    }
+
+    @Test
+    fun providerEndpointsNormalizeWithoutDuplicatingV1() {
+        assertEquals("https://api.deepseek.com/v1/models", normalizeModelsEndpoint("https://api.deepseek.com"))
+        assertEquals("https://api.minimaxi.com/v1/models", normalizeModelsEndpoint("https://api.minimaxi.com/v1"))
+        assertEquals(
+            "https://api.minimax.io/v1/chat/completions",
+            normalizeChatEndpoint("https://api.minimax.io/v1")
+        )
+    }
+
+    @Test
+    fun providerErrorIncludesJsonMessage() {
+        val error = providerHttpError(
+            prefix = "AI 请求失败",
+            responseCode = 401,
+            body = """{"error":{"message":"Invalid API key"}}"""
+        )
+
+        assertTrue(error.message.orEmpty().contains("HTTP 401"))
+        assertTrue(error.message.orEmpty().contains("Invalid API key"))
+    }
+
+    @Test
+    fun parsesMiniMaxLegacyErrorMessage() {
+        val detail = parseProviderError(
+            """{"base_resp":{"status_code":1004,"status_msg":"login fail"}}"""
+        )
+
+        assertEquals("login fail", detail)
     }
 
     @Test

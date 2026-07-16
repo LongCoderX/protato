@@ -16,13 +16,14 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.Visibility
+import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -40,10 +41,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import com.protato.app.LlmProviderSettings
+import com.protato.app.containsApiKeyMask
+import com.protato.app.sanitizeLegacyApiKey
+import com.protato.app.ai.hasUsableApiKey
+import com.protato.app.ui.components.ProtatoPanel
 import kotlinx.coroutines.launch
 
 @Composable
@@ -57,11 +66,7 @@ fun RecordPolishProviderCard(
     var providerMenuExpanded by remember { mutableStateOf(false) }
     val selectedProvider = providers.firstOrNull { it.id == selectedProviderId }
 
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
+    ProtatoPanel(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("总结润色模型", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Box {
@@ -113,19 +118,26 @@ fun LlmProviderEditDialog(
     onDelete: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
-    var provider by remember(initialProvider.id) { mutableStateOf(initialProvider) }
+    var provider by remember(initialProvider.id) {
+        mutableStateOf(initialProvider.copy(apiKey = sanitizeLegacyApiKey(initialProvider.apiKey)))
+    }
     var providerMenuExpanded by remember { mutableStateOf(false) }
     var modelMenuExpanded by remember { mutableStateOf(false) }
     var fetchedModels by remember { mutableStateOf<List<String>>(emptyList()) }
     var loadingModels by remember { mutableStateOf(false) }
     var modelFetchError by remember { mutableStateOf<String?>(null) }
-    val apiKeyMask = "***"
-    val apiKeyDisplay = if (provider.apiKey.isBlank()) "" else apiKeyMask
+    var modelFetchSuccess by remember { mutableStateOf<String?>(null) }
+    var apiKeyVisible by rememberSaveable(initialProvider.id) { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
-            TextButton(onClick = { onSave(provider) }) {
+            TextButton(
+                enabled = !provider.apiKey.containsApiKeyMask(),
+                onClick = {
+                    onSave(provider.copy(apiKey = sanitizeLegacyApiKey(provider.apiKey)))
+                }
+            ) {
                 Text("保存")
             }
         },
@@ -168,8 +180,11 @@ fun LlmProviderEditDialog(
                                     provider = provider.copy(
                                         providerKey = preset.providerKey,
                                         name = preset.name,
-                                        endpoint = provider.endpoint.ifBlank { preset.endpoint }
+                                        endpoint = preset.endpoint
                                     )
+                                    fetchedModels = emptyList()
+                                    modelFetchError = null
+                                    modelFetchSuccess = null
                                     providerMenuExpanded = false
                                 }
                             )
@@ -183,12 +198,24 @@ fun LlmProviderEditDialog(
                     label = { Text("显示名称") },
                     singleLine = true
                 )
+                if (provider.providerKey == "minimax") {
+                    Text(
+                        if ("api.minimaxi.com" in provider.endpoint) {
+                            "国内平台账号使用 minimaxi.com；海外平台账号使用 minimax.io。"
+                        } else {
+                            "当前为海外接口。国内 platform.minimaxi.com 创建的 Key 请切换到 MiniMax（国内）。"
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
                 OutlinedTextField(
                     value = provider.endpoint,
                     onValueChange = {
                         provider = provider.copy(endpoint = it.take(240))
                         fetchedModels = emptyList()
                         modelFetchError = null
+                        modelFetchSuccess = null
                     },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("接口地址") },
@@ -200,16 +227,23 @@ fun LlmProviderEditDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     OutlinedButton(
-                        enabled = provider.endpoint.isNotBlank() && !loadingModels,
+                        enabled = provider.endpoint.isNotBlank() && provider.hasUsableApiKey() && !loadingModels,
                         onClick = {
                             scope.launch {
                                 loadingModels = true
                                 modelFetchError = null
+                                modelFetchSuccess = null
                                 fetchedModels = runCatching {
                                     fetchModels(provider.endpoint, provider.apiKey)
                                 }.getOrElse { error ->
                                     modelFetchError = error.message ?: "获取模型失败"
                                     emptyList()
+                                }
+                                if (fetchedModels.isNotEmpty()) {
+                                    modelFetchSuccess = "连接成功，发现 ${fetchedModels.size} 个模型"
+                                    if (provider.modelName.isNotBlank() && provider.modelName !in fetchedModels) {
+                                        modelFetchError = "当前模型不在接口返回列表中，请重新选择。"
+                                    }
                                 }
                                 loadingModels = false
                             }
@@ -224,7 +258,7 @@ fun LlmProviderEditDialog(
                             Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = null)
                         }
                         Spacer(Modifier.width(6.dp))
-                        Text("获取模型")
+                        Text("测试连接")
                     }
                     Box(Modifier.weight(1f)) {
                         OutlinedButton(
@@ -275,22 +309,56 @@ fun LlmProviderEditDialog(
                 modelFetchError?.let { error ->
                     Text(error, color = MaterialTheme.colorScheme.error)
                 }
+                modelFetchSuccess?.let { success ->
+                    Text(success, color = MaterialTheme.colorScheme.primary)
+                }
                 OutlinedTextField(
-                    value = apiKeyDisplay,
-                    onValueChange = { value ->
-                        provider = when {
-                            value.isBlank() -> provider.copy(apiKey = "")
-                            value == apiKeyMask -> provider
-                            value.startsWith(apiKeyMask) -> {
-                                provider.copy(apiKey = value.removePrefix(apiKeyMask).take(240))
-                            }
-                            else -> provider.copy(apiKey = value.take(240))
-                        }
+                    value = provider.apiKey,
+                    onValueChange = {
+                        provider = provider.copy(apiKey = it.take(240))
+                        fetchedModels = emptyList()
+                        modelFetchError = null
+                        modelFetchSuccess = null
                     },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("API Key") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    visualTransformation = if (apiKeyVisible) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                    trailingIcon = {
+                        IconButton(onClick = { apiKeyVisible = !apiKeyVisible }) {
+                            Icon(
+                                imageVector = if (apiKeyVisible) {
+                                    Icons.Outlined.VisibilityOff
+                                } else {
+                                    Icons.Outlined.Visibility
+                                },
+                                contentDescription = if (apiKeyVisible) "隐藏 API Key" else "显示 API Key"
+                            )
+                        }
+                    },
                     singleLine = true
                 )
+                if (!provider.hasUsableApiKey()) {
+                    Text(
+                        if (provider.apiKey.isBlank()) {
+                            "填写 API Key 后可测试连接并读取模型列表。"
+                        } else if (provider.apiKey.containsApiKeyMask()) {
+                            "API Key 不能包含 * 掩码字符，请填写完整原始 Key。"
+                        } else {
+                            "当前 Key 长度异常，请重新填写完整 Key。"
+                        },
+                        color = if (provider.apiKey.isBlank()) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
             }
         }
     )
@@ -315,11 +383,7 @@ fun LlmProviderListCard(
     val selectedProvider = providers.firstOrNull { it.id == selectedProviderId }
         ?: providers.firstOrNull()
 
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
+    ProtatoPanel(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(

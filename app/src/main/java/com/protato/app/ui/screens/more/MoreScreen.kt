@@ -13,7 +13,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -25,17 +24,20 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import com.protato.app.ui.components.Header
 import com.protato.app.ui.components.ProtatoPanel
+import com.protato.app.ui.components.ProfileAvatar
+import com.protato.app.ProfileAvatarStyle
 
 @Composable
 fun MoreScreen(
     nickname: String,
-    todoCount: Int,
+    avatarStyle: ProfileAvatarStyle,
     focusMinutes: Int,
     level: Int,
     streak: Int,
     xp: Int,
     onOpenSettings: () -> Unit,
-    onOpenTemplates: () -> Unit
+    onOpenTemplates: () -> Unit,
+    onOpenAgentSettings: () -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -47,38 +49,32 @@ fun MoreScreen(
         }
         item {
             ProtatoPanel(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                Surface(
+                    onClick = onOpenSettings,
+                    color = androidx.compose.ui.graphics.Color.Transparent
                 ) {
-                    Surface(
-                        shape = androidx.compose.foundation.shape.CircleShape,
-                        color = MaterialTheme.colorScheme.primary
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Text(
-                            nickname.take(1).uppercase(),
-                            modifier = Modifier.padding(12.dp),
-                            color = MaterialTheme.colorScheme.onPrimary,
-                            style = MaterialTheme.typography.titleMedium
-                        )
+                        ProfileAvatar(avatarStyle = avatarStyle, contentDescription = "编辑个人资料")
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(nickname, style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "LV $level · 连续 $streak 天 · $xp XP · $focusMinutes 分钟专注",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        Text("0.2.9", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(nickname, style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            "LV $level · 连续 $streak 天 · $xp XP · $focusMinutes 分钟专注",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                    Text("0.2.9", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
-        item { MoreEntryRow(Icons.Outlined.Settings, "设置", "昵称、外观、同步和模型配置", onOpenSettings) }
+        item { MoreEntryRow(Icons.Outlined.Settings, "设置", "个人资料、主题和字体", onOpenSettings) }
         item { MoreEntryRow(Icons.Outlined.Description, "复盘模板", "定义每轮专注结束后的问题", onOpenTemplates) }
-        item { MoreEntryRow(Icons.Outlined.Timer, "计时偏好", "专注与休息时长在专注页调整", null) }
-        item { MoreEntryRow(Icons.Outlined.AutoAwesome, "AI 助理", "对话、任务草案和每日总结", null) }
+        item { MoreEntryRow(Icons.Outlined.AutoAwesome, "AI 助理", "Provider、模型和工具权限", onOpenAgentSettings) }
     }
 }
 

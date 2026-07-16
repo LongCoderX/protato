@@ -75,7 +75,7 @@ fun DailySummaryCard(
     title: String,
     statsText: String,
     hasSummary: Boolean,
-    hasRecords: Boolean,
+    hasActivity: Boolean,
     loading: Boolean,
     onGenerate: () -> Unit,
     onOpen: () -> Unit
@@ -107,7 +107,7 @@ fun DailySummaryCard(
                     Icon(Icons.Outlined.Edit, contentDescription = "查看总结")
                 }
                 FilledIconButton(
-                    enabled = hasRecords && !loading,
+                    enabled = hasActivity && !loading,
                     onClick = onGenerate
                 ) {
                     Icon(

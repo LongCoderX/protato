@@ -247,6 +247,7 @@ internal fun TodoEditorDialog(
     onSave: (TodoItem) -> Unit
 ) {
     var title by rememberSaveable(todo.id) { mutableStateOf(todo.title) }
+    var description by rememberSaveable(todo.id) { mutableStateOf(todo.description) }
     var draftTags by rememberSaveable(todo.id) { mutableStateOf(todo.tags) }
     var draftDueDate by rememberSaveable(todo.id) { mutableStateOf(todo.dueDate) }
     var draftReminderAt by rememberSaveable(todo.id) { mutableStateOf(todo.reminderAt) }
@@ -269,6 +270,7 @@ internal fun TodoEditorDialog(
                 onClick = {
                     val draftTodo = todo.copy(
                         title = title.trim(),
+                        description = description.trim(),
                         tags = draftTags,
                         dueDate = draftDueDate,
                         plannedPomodoros = plannedPomodoros,
@@ -293,13 +295,26 @@ internal fun TodoEditorDialog(
         },
         title = { Text(if (todo.title.isBlank()) "新建待办" else "编辑待办") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
                 OutlinedTextField(
                     value = title,
                     onValueChange = { title = it },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("待办内容") },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
+                )
+                OutlinedTextField(
+                    value = description,
+                    onValueChange = { description = it.take(1200) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("任务说明") },
+                    placeholder = { Text("补充目标、验收标准或执行备注") },
+                    minLines = 3,
+                    maxLines = 6,
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences)
                 )
                 Column(

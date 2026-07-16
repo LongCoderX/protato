@@ -123,6 +123,26 @@ internal fun reduceTodoEvent(
             )
         }
 
+        is ProtatoEvent.ResolveOverdueTodos -> {
+            val today = dayKey(nowMillis)
+            StateReduction(
+                state.copy(
+                    todos = if (event.moveToToday) {
+                        state.todos.map { todo ->
+                            if (todo.id in event.todoIds && !todo.completed) {
+                                todo.copy(dueDate = today)
+                            } else {
+                                todo
+                            }
+                        }
+                    } else {
+                        state.todos
+                    },
+                    lastOverdueTodoDecisionDay = today
+                )
+            )
+        }
+
         is ProtatoEvent.UpdateTodo -> {
             StateReduction(
                 state.copy(

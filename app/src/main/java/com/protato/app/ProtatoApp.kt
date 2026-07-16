@@ -6,6 +6,7 @@ import com.protato.app.ui.screens.settings.SettingsScreen
 import com.protato.app.ui.screens.records.RecordsScreen
 import com.protato.app.ui.screens.focus.FocusScreen
 import com.protato.app.ui.screens.agent.AgentScreen
+import com.protato.app.ui.screens.agent.AgentSettingsScreen
 
 
 import com.protato.app.domain.timer.*
@@ -16,9 +17,7 @@ import com.protato.app.state.ProtatoEffect
 import com.protato.app.state.ProtatoEvent
 import com.protato.app.state.ProtatoEventResult
 import com.protato.app.util.*
-import com.protato.app.sync.WebDavBackupController
 import com.protato.app.state.ProtatoAppLifecycle
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -29,6 +28,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.protato.app.ai.AgentSessionState
 import com.protato.app.ai.AgentTurnController
+import com.protato.app.ai.AiDiagnostics
 import com.protato.app.ui.MainTab
 import com.protato.app.ui.ProtatoBottomBar
 import com.protato.app.ui.ProtatoTheme
@@ -50,6 +51,7 @@ import com.protato.app.ui.screens.more.MoreScreen
 @Composable
 fun ProtatoApp() {
     val context = LocalContext.current
+    SideEffect { AiDiagnostics.initialize(context.filesDir) }
     val scope = rememberCoroutineScope()
     val stateHolder = remember { createProtatoStateHolder(context) }
     val effectRunner = remember { ProtatoEffectRunner(context) }
@@ -62,10 +64,6 @@ fun ProtatoApp() {
     var agentErrorText by rememberSaveable { mutableStateOf<String?>(null) }
     var agentSessionState by remember { mutableStateOf(AgentSessionState()) }
     val agentTurnController = remember(scope) { AgentTurnController(scope) }
-    val backupController = remember(scope) { WebDavBackupController(scope) }
-    val backingUp = backupController.backingUp
-
-    val todayKey = dayKey(System.currentTimeMillis())
     val selectedTodo = appState.todos.firstOrNull {
         it.id == selectedTodoId && !it.completed
     }
@@ -94,10 +92,6 @@ fun ProtatoApp() {
 
     fun dispatchEvent(event: ProtatoEvent) {
         handleEventResult(stateHolder.dispatch(event))
-    }
-
-    fun requestBackup() = backupController.upload(appState) { message ->
-        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
     }
 
     ProtatoAppLifecycle(
@@ -176,8 +170,12 @@ fun ProtatoApp() {
                             SecondaryDestination.Settings -> SettingsScreen(
                                 appState = appState,
                                 appVersionName = BuildConfig.VERSION_NAME,
-                                backingUp = backingUp,
-                                onBackup = ::requestBackup,
+                                onEvent = ::dispatchEvent,
+                                onBack = { secondaryDestination = null }
+                            )
+
+                            SecondaryDestination.AiSettings -> AgentSettingsScreen(
+                                appState = appState,
                                 onEvent = ::dispatchEvent,
                                 onBack = { secondaryDestination = null }
                             )
@@ -186,11 +184,14 @@ fun ProtatoApp() {
                                 appState.todos.firstOrNull { it.id == todoId }?.let { todo ->
                                     TodoDetailScreen(
                                         todo = todo,
+                                        availableTags = appState.todos.flatMap { it.tags }.distinct(),
                                         onBack = {
                                             detailTodoId = null
                                             secondaryDestination = null
                                         },
-                                        onToggle = { dispatchEvent(ProtatoEvent.ToggleTodo(todo)) },
+                                        onUpdate = { updatedTodo ->
+                                            dispatchEvent(ProtatoEvent.UpdateTodo(updatedTodo))
+                                        },
                                         onToggleSubtask = { subtaskId ->
                                             dispatchEvent(ProtatoEvent.UpdateTodo(todo.toggleSubtask(subtaskId)))
                                         },
@@ -300,6 +301,7 @@ fun ProtatoApp() {
                             providers = appState.llmProviders,
                             agents = appState.agents,
                             nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
+                            lastOverdueTodoDecisionDay = appState.lastOverdueTodoDecisionDay,
                             onOpenDetail = { todo ->
                                 detailTodoId = todo.id
                                 secondaryDestination = SecondaryDestination.TodoDetail
@@ -321,6 +323,14 @@ fun ProtatoApp() {
                             },
                             onMoveManyToToday = { itemIds ->
                                 dispatchEvent(ProtatoEvent.MoveTodosToToday(itemIds))
+                            },
+                            onResolveOverdueTodos = { itemIds, moveToToday ->
+                                dispatchEvent(
+                                    ProtatoEvent.ResolveOverdueTodos(
+                                        todoIds = itemIds,
+                                        moveToToday = moveToToday
+                                    )
+                                )
                             },
                             onDeleteMany = { itemIds ->
                                 dispatchEvent(ProtatoEvent.DeleteTodos(itemIds))
@@ -349,8 +359,9 @@ fun ProtatoApp() {
                         MainTab.More -> MoreScreen(
                             onOpenSettings = { secondaryDestination = SecondaryDestination.Settings },
                             onOpenTemplates = { secondaryDestination = SecondaryDestination.Templates },
+                            onOpenAgentSettings = { secondaryDestination = SecondaryDestination.AiSettings },
                             nickname = appState.nickname.ifBlank { DEFAULT_NICKNAME },
-                            todoCount = appState.todos.count { !it.completed },
+                            avatarStyle = appState.avatarStyle,
                             focusMinutes = appState.records.sumOf { it.focusMinutes },
                             level = appState.records.size / 5 + 1,
                             streak = appState.records.map { dayKey(it.endedAt) }.distinct().size,

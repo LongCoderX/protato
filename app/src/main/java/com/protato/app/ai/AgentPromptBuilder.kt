@@ -21,7 +21,9 @@ internal suspend fun requestUnifiedAgentChat(
     state: AppState,
     agent: AgentSettings,
     provider: LlmProviderSettings,
-    nickname: String
+    nickname: String,
+    contextTodoId: String? = null,
+    allowedToolNames: Set<String>? = null
 ): String {
     val systemPrompt = buildString {
         append(agent.prompt.withNickname(nickname))
@@ -54,13 +56,50 @@ internal suspend fun requestUnifiedAgentChat(
         append(" 不要把内部思考长篇写出来；自然语言只保留严谨结论、依据和等待确认的动作。回答要短、具体、可执行。")
         append("\n\n当前上下文：\n")
         append(state.toUnifiedAgentContext(nickname, agent.permissions))
+        appendSelectedTodoContext(state, contextTodoId)
     }
     return requestLlmChat(
         provider = provider,
         messages = listOf(LlmChatMessage("system", systemPrompt)) +
             state.agentMessages.takeLast(16).map { LlmChatMessage(it.role, it.content) },
-        tools = protatoAgentTools()
+        tools = protatoAgentTools().filter { tool ->
+            allowedToolNames == null || tool.name in allowedToolNames
+        }
     )
+}
+
+internal suspend fun requestTodoUpdateRepair(
+    state: AppState,
+    agent: AgentSettings,
+    provider: LlmProviderSettings,
+    nickname: String,
+    userText: String,
+    contextTodoId: String? = null
+): String {
+    val systemPrompt = buildString {
+        append("你是 Protato 的任务修改调用修复器。用户明确要求修改已有任务，但上一轮没有生成可执行工具调用。")
+        append(" 你必须根据授权上下文中的 todoId 调用 propose_todo_updates，不能声称已经修改。")
+        append(" 如果无法唯一定位目标任务，只能简短询问用户要修改哪一个任务，不得调用工具。")
+        append(" 每次最多修改 6 个仍未完成的任务，不得构造上下文中不存在的 ID。")
+        append("\n\n当前授权上下文：\n")
+        append(state.toUnifiedAgentContext(nickname, agent.permissions))
+        appendSelectedTodoContext(state, contextTodoId)
+    }
+    return requestLlmChat(
+        provider = provider,
+        messages = listOf(
+            LlmChatMessage("system", systemPrompt),
+            LlmChatMessage("user", userText)
+        ),
+        tools = protatoAgentTools().filter { it.name == "propose_todo_updates" }
+    )
+}
+
+private fun StringBuilder.appendSelectedTodoContext(state: AppState, contextTodoId: String?) {
+    val selectedTodo = contextTodoId?.let { id ->
+        state.todos.firstOrNull { it.id == id && !it.completed }
+    } ?: return
+    append("\n当前用户选中的任务：id=${selectedTodo.id}，标题=${selectedTodo.title}。")
 }
 
 internal fun protatoAgentTools(): List<LlmChatTool> {

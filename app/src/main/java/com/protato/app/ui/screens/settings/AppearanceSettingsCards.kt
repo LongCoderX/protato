@@ -14,8 +14,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -39,16 +37,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.protato.app.ProtatoThemeChoice
+import com.protato.app.ProfileAvatarStyle
+import com.protato.app.ui.components.ProfileAvatar
+import com.protato.app.ui.components.iconForAvatarStyle
+import com.protato.app.ui.components.ProtatoPanel
 
 @Composable
 fun ProjectVersionCard(
     appVersionName: String
 ) {
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
+    ProtatoPanel(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -75,17 +73,28 @@ fun ProjectVersionCard(
 }
 
 @Composable
-fun NicknameSettingsCard(
+fun ProfileSettingsCard(
     nickname: String,
-    onNicknameChange: (String) -> Unit
+    avatarStyle: ProfileAvatarStyle,
+    onNicknameChange: (String) -> Unit,
+    onAvatarStyleChange: (ProfileAvatarStyle) -> Unit
 ) {
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
+    ProtatoPanel(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("个人昵称", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                ProfileAvatar(avatarStyle = avatarStyle, contentDescription = null)
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("个人资料", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "昵称会用于问候和助理对话",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
             OutlinedTextField(
                 value = nickname,
                 onValueChange = { onNicknameChange(it.take(24)) },
@@ -93,7 +102,56 @@ fun NicknameSettingsCard(
                 label = { Text("本地昵称") },
                 singleLine = true
             )
+            Text(
+                "选择头像",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                ProfileAvatarStyle.entries.forEach { style ->
+                    val selected = style == avatarStyle
+                    Surface(
+                        onClick = { onAvatarStyleChange(style) },
+                        modifier = Modifier.size(42.dp),
+                        shape = androidx.compose.foundation.shape.CircleShape,
+                        color = if (selected) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.surfaceVariant
+                        },
+                        contentColor = if (selected) {
+                            MaterialTheme.colorScheme.onPrimary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        border = if (selected) null else androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            MaterialTheme.colorScheme.outline
+                        )
+                    ) {
+                        Icon(
+                            iconForAvatarStyle(style),
+                            contentDescription = avatarStyleLabel(style),
+                            modifier = Modifier.padding(10.dp)
+                        )
+                    }
+                }
+            }
         }
+    }
+}
+
+private fun avatarStyleLabel(style: ProfileAvatarStyle): String {
+    return when (style) {
+        ProfileAvatarStyle.Focus -> "专注"
+        ProfileAvatarStyle.Spark -> "灵感"
+        ProfileAvatarStyle.Rocket -> "冲刺"
+        ProfileAvatarStyle.Trophy -> "成就"
+        ProfileAvatarStyle.Bolt -> "能量"
+        ProfileAvatarStyle.Person -> "玩家"
     }
 }
 
@@ -103,11 +161,7 @@ fun FontScaleSettingsCard(
     onChange: (Float) -> Unit
 ) {
     var editing by rememberSaveable { mutableStateOf(false) }
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
+    ProtatoPanel(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -227,11 +281,7 @@ fun ThemeSettingsCard(
     selectedTheme: ProtatoThemeChoice,
     onChange: (ProtatoThemeChoice) -> Unit
 ) {
-    ElevatedCard(
-        shape = RoundedCornerShape(8.dp),
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
+    ProtatoPanel(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("主题颜色", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
             Row(

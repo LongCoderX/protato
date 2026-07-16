@@ -2,6 +2,7 @@ package com.protato.app.ai
 
 import com.protato.app.*
 import com.protato.app.domain.timer.*
+import com.protato.app.domain.todo.overdueBefore
 import com.protato.app.util.*
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.automirrored.outlined.List
@@ -51,12 +52,13 @@ internal suspend fun requestRecordPolish(
 internal suspend fun generateDailySummary(
     dayKey: String,
     records: List<PomodoroRecord>,
+    todos: List<TodoItem>,
     templates: List<RecordTemplate>,
     providers: List<LlmProviderSettings>,
     agents: List<AgentSettings>,
     nickname: String
 ): DailySummary {
-    val fallback = localDailySummary(dayKey, records, nickname)
+    val fallback = localDailySummary(dayKey, records, todos, nickname)
     val agent = selectDailySummaryAgent(agents) ?: return fallback
     val provider = agent.providerId.let { providerId ->
         providers.firstOrNull { it.id == providerId }
@@ -66,7 +68,7 @@ internal suspend fun generateDailySummary(
         append(agent.prompt.withNickname(nickname))
         appendAgentStylePrompt()
         append("\n你是 Protato 的每日番茄总结 Agent。你要把当天番茄记录汇总成一篇自然、清晰、有洞察的中文总结文章。")
-        append(" 必须包含：番茄数量、总专注时长、专注对象/次数、今天状态评价、一个具体改进建议，以及最后真诚有力的鼓励。")
+        append(" 必须包含：番茄数量、总专注时长、专注对象/次数、今天状态评价、一个具体改进建议，以及最后真诚有力的鼓励；已授权待办时还必须包含任务完成状态和逾期未完成任务。")
         append(" 请使用 Markdown 输出，可以使用二级标题、列表和加粗。")
         append(" 不要编造记录之外的事实。")
     }
@@ -74,6 +76,12 @@ internal suspend fun generateDailySummary(
         append("日期：$dayKey\n")
         append("用户昵称：${nickname.ifBlank { DEFAULT_NICKNAME }}\n")
         append(records.toDailySummaryContext(templates))
+        if (agent.permissions.todos) {
+            append("\n\n任务状态：\n")
+            append(todos.toDailyTodoSummaryContext(dayKey))
+        } else {
+            append("\n\n任务状态：未授权读取待办\n")
+        }
         append("\n请写成 500 字以内的 Markdown 总结。")
     }
     val content = requestLlmChat(
@@ -92,6 +100,7 @@ internal suspend fun generateDailySummary(
 internal fun localDailySummary(
     dayKey: String,
     records: List<PomodoroRecord>,
+    todos: List<TodoItem>,
     nickname: String
 ): DailySummary {
     val totalMinutes = records.sumOf { it.focusMinutes }
@@ -100,6 +109,17 @@ internal fun localDailySummary(
         .joinToString("、") { "${it.key} ${it.value} 次" }
         .ifBlank { "暂无明确对象" }
     val name = nickname.ifBlank { DEFAULT_NICKNAME }
+    val dueTodos = todos.filter { it.dueDate == dayKey }
+    val completedDueTodos = dueTodos.count { it.completed }
+    val overdueTodos = todos.overdueBefore(dayKey)
+    val taskStatus = buildString {
+        append("## ✅ 任务状态\n\n")
+        append("- 当天任务：**$completedDueTodos/${dueTodos.size} 已完成**\n")
+        append("- 逾期未完成：**${overdueTodos.size} 个**")
+        if (overdueTodos.isNotEmpty()) {
+            append("（${overdueTodos.take(3).joinToString("、") { it.title }}）")
+        }
+    }
     val content = if (records.isEmpty()) {
         """
         ## 🌱 今天还没有番茄记录
@@ -109,6 +129,8 @@ internal fun localDailySummary(
         - 先选一个足够小的任务
         - 完成一轮就好
         - 把第一条记录留在时间轴上
+
+        $taskStatus
         """.trimIndent()
     } else {
         """
@@ -119,6 +141,8 @@ internal fun localDailySummary(
         - 主要投入：$topTargets
         - 节奏观察：你已经把时间放进了具体事情里，而不只是停在“想做”
         - 下一步：复盘哪一轮最顺、哪一轮最容易分心，再把下一轮番茄安排给最重要的小目标
+
+        $taskStatus
 
         > 请认真收下这份完成感。每一个番茄都不大，但它们合在一起，就是你把生活重新握回手里的证据。✨
         """.trimIndent()
@@ -219,6 +243,21 @@ internal fun List<PomodoroRecord>.toDailySummaryContext(templates: List<RecordTe
         append("记录详情：\n")
         append(details.ifBlank { "无记录" })
     }
+}
+
+internal fun List<TodoItem>.toDailyTodoSummaryContext(dayKey: String): String {
+    val dueTodos = filter { it.dueDate == dayKey }
+    val overdueTodos = overdueBefore(dayKey)
+    return buildString {
+        append("当天任务：${dueTodos.size} 个，完成 ${dueTodos.count { it.completed }} 个，未完成 ${dueTodos.count { !it.completed }} 个\n")
+        dueTodos.take(20).forEach { todo ->
+            append("- [${if (todo.completed) "已完成" else "未完成"}] ${todo.title}\n")
+        }
+        append("截至总结生成时逾期未完成：${overdueTodos.size} 个\n")
+        overdueTodos.take(20).forEach { todo ->
+            append("- [原日期 ${todo.dueDate}] ${todo.title}\n")
+        }
+    }.trimEnd()
 }
 
 internal fun hasMissingRequiredAnswers(

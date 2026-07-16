@@ -115,13 +115,19 @@ internal suspend fun runAgentTurn(
     }
     var errorText: String? = null
     val shouldUseRemoteAgent = agent != null && provider != null && provider.isConfiguredForChat()
-    val rawReply = runCatching {
+    var rawReply = runCatching {
         if (shouldUseRemoteAgent) {
             requestUnifiedAgentChat(
                 state = userState,
                 agent = agent,
                 provider = provider,
-                nickname = nickname
+                nickname = nickname,
+                contextTodoId = contextTodoId,
+                allowedToolNames = when (intent) {
+                    is AgentIntent.UpdateTodo -> setOf("propose_todo_updates")
+                    is AgentIntent.PlanTodos -> setOf("propose_todos")
+                    else -> null
+                }
             )
         } else {
             localUnifiedAgentReply(text, userState, nickname, canReadTodos = canReadTodos)
@@ -129,6 +135,26 @@ internal suspend fun runAgentTurn(
     }.getOrElse { error ->
         errorText = error.message ?: "发送失败"
         localUnifiedAgentReply(text, userState, nickname, canReadTodos = canReadTodos)
+    }
+    if (
+        intent is AgentIntent.UpdateTodo &&
+        shouldUseRemoteAgent &&
+        canReadTodos &&
+        !rawReply.hasAgentTodoToolResults()
+    ) {
+        rawReply = runCatching {
+            requestTodoUpdateRepair(
+                state = userState,
+                agent = requireNotNull(agent),
+                provider = requireNotNull(provider),
+                nickname = nickname,
+                userText = text,
+                contextTodoId = contextTodoId
+            )
+        }.getOrElse { error ->
+            errorText = error.message ?: "修改草案生成失败"
+            rawReply
+        }
     }
     val todoDrafts = if (intent is AgentIntent.PlanTodos && !rawReply.hasAgentTodoToolResults()) {
         createLocalTodoDraftsForTurn(planningText)
@@ -143,6 +169,7 @@ internal suspend fun runAgentTurn(
         handledTodoEditKeys = handledTodoEditKeys,
         allowTodoActions = canReadTodos,
         allowedTodoIds = userState.todos.filterNot { it.completed }.mapTo(mutableSetOf(), TodoItem::id),
+        requireTodoEdits = intent is AgentIntent.UpdateTodo,
         errorText = errorText
     )
 }
@@ -160,6 +187,7 @@ internal fun buildAgentTurnResultFromRawReply(
     handledTodoEditKeys: Set<String>,
     allowTodoActions: Boolean,
     allowedTodoIds: Set<String>,
+    requireTodoEdits: Boolean = false,
     errorText: String? = null
 ): AgentTurnResult {
     val toolResponse = parseAgentToolResponse(rawReply)
@@ -179,7 +207,9 @@ internal fun buildAgentTurnResultFromRawReply(
         existingTodos = existingTodos,
         handledKeys = handledTodoEditKeys
     )
-    val reply = if (
+    val reply = if (requireTodoEdits && finalTodoEdits.isEmpty()) {
+        "我没有生成可执行的修改草案，因此没有修改任何任务。请明确任务名称和要修改的内容后重试。"
+    } else if (
         (
             parsedTodoDrafts.isNotEmpty() ||
                 permittedFallbackDrafts.isNotEmpty() ||

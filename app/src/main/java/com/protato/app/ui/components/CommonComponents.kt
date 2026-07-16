@@ -12,7 +12,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.EmojiEvents
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.outlined.RocketLaunch
+import androidx.compose.material.icons.outlined.TrackChanges
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -26,6 +32,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.protato.app.ProfileAvatarStyle
 
 @Composable
 fun Header(
@@ -116,6 +123,37 @@ fun ProtatoPanel(
         tonalElevation = 0.dp,
         content = content
     )
+}
+
+@Composable
+fun ProfileAvatar(
+    avatarStyle: ProfileAvatarStyle,
+    contentDescription: String?,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.size(44.dp),
+        shape = androidx.compose.foundation.shape.CircleShape,
+        color = MaterialTheme.colorScheme.primary,
+        contentColor = MaterialTheme.colorScheme.onPrimary
+    ) {
+        Icon(
+            iconForAvatarStyle(avatarStyle),
+            contentDescription = contentDescription,
+            modifier = Modifier.padding(11.dp)
+        )
+    }
+}
+
+fun iconForAvatarStyle(avatarStyle: ProfileAvatarStyle): ImageVector {
+    return when (avatarStyle) {
+        ProfileAvatarStyle.Focus -> Icons.Outlined.TrackChanges
+        ProfileAvatarStyle.Spark -> Icons.Outlined.AutoAwesome
+        ProfileAvatarStyle.Rocket -> Icons.Outlined.RocketLaunch
+        ProfileAvatarStyle.Trophy -> Icons.Outlined.EmojiEvents
+        ProfileAvatarStyle.Bolt -> Icons.Outlined.Bolt
+        ProfileAvatarStyle.Person -> Icons.Outlined.Person
+    }
 }
 
 @Composable

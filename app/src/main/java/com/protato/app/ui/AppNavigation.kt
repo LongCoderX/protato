@@ -46,6 +46,7 @@ enum class MainTab(val label: String, val icon: ImageVector) {
 enum class SecondaryDestination(val title: String) {
     Templates("记录模板"),
     Settings("设置"),
+    AiSettings("AI 配置"),
     TodoDetail("任务详情")
 }
 

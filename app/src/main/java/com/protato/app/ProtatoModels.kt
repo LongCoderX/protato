@@ -24,7 +24,8 @@ data class TodoItem(
     val complexity: TodoComplexity = TodoComplexity.Simple,
     val completionReview: TodoCompletionReview? = null,
     val subtasks: List<TodoSubtask> = emptyList(),
-    val summary: String = ""
+    val summary: String = "",
+    val description: String = ""
 )
 
 data class TodoSubtask(
@@ -43,6 +44,15 @@ enum class ProtatoThemeChoice {
     SeaSalt,
     Berry,
     Paper
+}
+
+enum class ProfileAvatarStyle {
+    Focus,
+    Spark,
+    Rocket,
+    Trophy,
+    Bolt,
+    Person
 }
 
 data class TodoCompletionReview(
@@ -176,12 +186,14 @@ data class AppState(
     val pendingRecord: PendingPomodoroRecord? = null,
     val projectRevision: Int = 1,
     val nickname: String = DEFAULT_NICKNAME,
+    val avatarStyle: ProfileAvatarStyle = ProfileAvatarStyle.Focus,
     val llmProviders: List<LlmProviderSettings> = defaultLlmProviders(),
     val agents: List<AgentSettings> = defaultAgents(),
     val agentMessages: List<AgentConversationMessage> = defaultAgentConversation(),
     val agentMemory: String = "",
     val webDavBackup: WebDavBackupSettings = WebDavBackupSettings(),
     val recordPolishProviderId: String = "",
+    val lastOverdueTodoDecisionDay: String? = null,
     val fontScale: Float = 1.0f,
     val themeChoice: ProtatoThemeChoice = ProtatoThemeChoice.Mint
 )
@@ -203,7 +215,8 @@ const val JIANGUOYUN_WEBDAV_BACKUP_FILE_URL = JIANGUOYUN_WEBDAV_FOLDER_URL + JIA
 fun defaultLlmProviders(): List<LlmProviderSettings> {
     return listOf(
         LlmProviderSettings("provider-deepseek", "deepseek", "DeepSeek", endpoint = "https://api.deepseek.com"),
-        LlmProviderSettings("provider-minimax", "minimax", "MiniMax", endpoint = "https://api.minimax.io/v1"),
+        LlmProviderSettings("provider-minimax", "minimax", "MiniMax（国内）", endpoint = "https://api.minimaxi.com/v1"),
+        LlmProviderSettings("provider-minimax-global", "minimax", "MiniMax（海外）", endpoint = "https://api.minimax.io/v1"),
         LlmProviderSettings("provider-qwen", "qwen", "Qwen", endpoint = "https://dashscope.aliyuncs.com/compatible-mode"),
         LlmProviderSettings("provider-openai", "openai", "OpenAI", endpoint = "https://api.openai.com"),
         LlmProviderSettings("provider-claude-code", "claude_code", "Claude Code"),

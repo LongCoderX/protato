@@ -10,6 +10,12 @@ fun List<TodoItem>.sortedForAction(todayKey: String): List<TodoItem> {
     )
 }
 
+fun List<TodoItem>.overdueBefore(dayKey: String): List<TodoItem> {
+    return filter { todo ->
+        !todo.completed && todo.dueDate != null && todo.dueDate < dayKey
+    }
+}
+
 private fun String?.priorityAgainst(todayKey: String): Int {
     return when (this) {
         null -> 0

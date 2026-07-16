@@ -2,6 +2,7 @@ package com.protato.app.state
 
 import com.protato.app.AppState
 import com.protato.app.DEFAULT_NICKNAME
+import com.protato.app.sanitizeLegacyApiKey
 
 internal fun reduceSettingsEvent(
     state: AppState,
@@ -10,6 +11,10 @@ internal fun reduceSettingsEvent(
     return when (event) {
         is ProtatoEvent.UpdateNickname -> {
             StateReduction(state.copy(nickname = event.nickname.ifBlank { DEFAULT_NICKNAME }))
+        }
+
+        is ProtatoEvent.UpdateAvatarStyle -> {
+            StateReduction(state.copy(avatarStyle = event.avatarStyle))
         }
 
         is ProtatoEvent.UpdateFontScale -> {
@@ -25,13 +30,16 @@ internal fun reduceSettingsEvent(
         }
 
         is ProtatoEvent.UpsertLlmProvider -> {
+            val sanitizedProvider = event.provider.copy(
+                apiKey = sanitizeLegacyApiKey(event.provider.apiKey)
+            )
             val exists = state.llmProviders.any { it.id == event.provider.id }
             val providers = if (exists) {
                 state.llmProviders.map { provider ->
-                    if (provider.id == event.provider.id) event.provider else provider
+                    if (provider.id == event.provider.id) sanitizedProvider else provider
                 }
             } else {
-                state.llmProviders + event.provider
+                state.llmProviders + sanitizedProvider
             }
             StateReduction(state.copy(llmProviders = providers))
         }
@@ -53,6 +61,15 @@ internal fun reduceSettingsEvent(
 
         is ProtatoEvent.SelectRecordPolishProvider -> {
             StateReduction(state.copy(recordPolishProviderId = event.providerId))
+        }
+
+        is ProtatoEvent.UpdateAgent -> {
+            val agents = state.agents.map { agent ->
+                if (agent.id == event.agent.id) event.agent else agent
+            }.let { current ->
+                if (current.any { it.id == event.agent.id }) current else current + event.agent
+            }
+            StateReduction(state.copy(agents = agents))
         }
     }
 }

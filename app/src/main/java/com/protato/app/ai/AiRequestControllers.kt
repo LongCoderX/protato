@@ -6,6 +6,7 @@ import com.protato.app.DailySummary
 import com.protato.app.LlmProviderSettings
 import com.protato.app.PomodoroRecord
 import com.protato.app.RecordTemplate
+import com.protato.app.TodoItem
 import com.protato.app.domain.timer.PendingRecord
 import com.protato.app.domain.todo.TodoDraft
 import kotlinx.coroutines.CancellationException
@@ -186,6 +187,7 @@ internal class DailySummaryController(scope: CoroutineScope) {
     fun submit(
         dayKey: String,
         records: List<PomodoroRecord>,
+        todos: List<TodoItem>,
         templates: List<RecordTemplate>,
         providers: List<LlmProviderSettings>,
         agents: List<AgentSettings>,
@@ -194,8 +196,8 @@ internal class DailySummaryController(scope: CoroutineScope) {
     ): Boolean = requests.submit(
         request = {
             runCatching {
-                generateDailySummary(dayKey, records, templates, providers, agents, nickname)
-            }.getOrElse { localDailySummary(dayKey, records, nickname) }
+                generateDailySummary(dayKey, records, todos, templates, providers, agents, nickname)
+            }.getOrElse { localDailySummary(dayKey, records, todos, nickname) }
         },
         onSuccess = onSuccess
     )
