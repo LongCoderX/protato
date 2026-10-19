@@ -2,11 +2,15 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*.*.*"
+    branches:
+      - main
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-main-latest
+  cancel-in-progress: true
 
 jobs:
   release:
@@ -16,6 +20,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up JDK
         uses: actions/setup-java@v4
@@ -33,32 +39,43 @@ jobs:
       - name: Unit tests and lint
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug
 
-      - name: Check release signing secrets
-        id: signing
+      - name: Resolve release metadata
+        id: meta
+        run: |
+          echo "tag_name=main-latest" >> "$GITHUB_OUTPUT"
+          echo "release_name=Main Latest" >> "$GITHUB_OUTPUT"
+          echo "asset_prefix=main-latest" >> "$GITHUB_OUTPUT"
+
+      - name: Validate release signing secrets
         env:
           PROTATO_KEYSTORE_BASE64: ${{ secrets.PROTATO_KEYSTORE_BASE64 }}
           PROTATO_KEYSTORE_PASSWORD: ${{ secrets.PROTATO_KEYSTORE_PASSWORD }}
           PROTATO_KEY_ALIAS: ${{ secrets.PROTATO_KEY_ALIAS }}
           PROTATO_KEY_PASSWORD: ${{ secrets.PROTATO_KEY_PASSWORD }}
         run: |
-          if [ -n "$PROTATO_KEYSTORE_BASE64" ] && \
-             [ -n "$PROTATO_KEYSTORE_PASSWORD" ] && \
-             [ -n "$PROTATO_KEY_ALIAS" ] && \
-             [ -n "$PROTATO_KEY_PASSWORD" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
+          missing=0
+          for key in \
+            PROTATO_KEYSTORE_BASE64 \
+            PROTATO_KEYSTORE_PASSWORD \
+            PROTATO_KEY_ALIAS \
+            PROTATO_KEY_PASSWORD
+          do
+            if [ -z "${!key}" ]; then
+              echo "::error::$key is required for release builds"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
           fi
 
       - name: Decode release keystore
-        if: steps.signing.outputs.available == 'true'
         env:
           PROTATO_KEYSTORE_BASE64: ${{ secrets.PROTATO_KEYSTORE_BASE64 }}
         run: |
           echo "$PROTATO_KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/protato-release.jks"
 
       - name: Build signed release APK
-        if: steps.signing.outputs.available == 'true'
         env:
           PROTATO_KEYSTORE_PATH: ${{ runner.temp }}/protato-release.jks
           PROTATO_KEYSTORE_PASSWORD: ${{ secrets.PROTATO_KEYSTORE_PASSWORD }}
@@ -66,20 +83,45 @@ jobs:
           PROTATO_KEY_PASSWORD: ${{ secrets.PROTATO_KEY_PASSWORD }}
         run: ./gradlew --no-daemon :app:assembleRelease
 
-      - name: Build debug APK fallback
-        if: steps.signing.outputs.available != 'true'
-        run: ./gradlew --no-daemon :app:assembleDebug
-
-      - name: Prepare release asset
+      - name: Create source archive
         run: |
-          if [ "${{ steps.signing.outputs.available }}" = "true" ]; then
-            cp app/build/outputs/apk/release/app-release.apk "protato-${GITHUB_REF_NAME}-release.apk"
-          else
-            cp app/build/outputs/apk/debug/app-debug.apk "protato-${GITHUB_REF_NAME}-debug.apk"
-          fi
+          git archive --format=zip --output "protato-${{ steps.meta.outputs.asset_prefix }}-source.zip" HEAD
 
-      - name: Create GitHub release
+      - name: Prepare release assets
+        run: |
+          cp app/build/outputs/apk/release/app-release.apk "protato-${{ steps.meta.outputs.asset_prefix }}-release.apk"
+
+      - name: Update rolling release tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f "${{ steps.meta.outputs.tag_name }}" "$GITHUB_SHA"
+          git push origin "refs/tags/${{ steps.meta.outputs.tag_name }}" --force
+
+      - name: Write main release notes
+        run: |
+          {
+            echo "## Main branch auto release"
+            echo
+            echo "- Branch: \`main\`"
+            echo "- Commit: \`${GITHUB_SHA::7}\`"
+            echo "- Built at: $(date -u +"%Y-%m-%d %H:%M UTC")"
+            echo
+            echo "## Included commits"
+            jq -r '.commits[] | "- `\(.id[0:7])` \((.message | split("\n")[0]))"' "$GITHUB_EVENT_PATH"
+            echo
+            echo "## Artifacts"
+            echo "- \`protato-${{ steps.meta.outputs.asset_prefix }}-release.apk\`"
+            echo "- \`protato-${{ steps.meta.outputs.asset_prefix }}-source.zip\`"
+          } > release-notes.md
+
+      - name: Publish rolling main release
         uses: softprops/action-gh-release@v2
         with:
-          files: protato-${{ github.ref_name }}-*.apk
-          generate_release_notes: true
+          tag_name: ${{ steps.meta.outputs.tag_name }}
+          name: ${{ steps.meta.outputs.release_name }}
+          prerelease: true
+          body_path: release-notes.md
+          files: |
+            protato-${{ steps.meta.outputs.asset_prefix }}-release.apk
+            protato-${{ steps.meta.outputs.asset_prefix }}-source.zip

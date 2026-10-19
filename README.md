@@ -31,11 +31,10 @@ Android 番茄时钟：把「待办 → 专注计时 → 复盘 → 记录」串
 
 ## 发布
 
-推送语义化版本标签会触发 GitHub Actions，构建 signed release APK 并创建 Release：
+推送到 `main` 会触发 GitHub Actions，构建 signed release APK，并更新滚动 Release：`main-latest`。
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git push origin main
 ```
 
 签名配置、目录结构与开发约定见 [DEVELOPMENT.md](DEVELOPMENT.md)。

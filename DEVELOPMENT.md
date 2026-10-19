@@ -25,7 +25,11 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ./gradl
 
 ## 发布签名（GitHub Actions）
 
-推送 `v*.*.*` 标签时构建 signed release。仓库 Secrets：
+`release.yml` 只保留一条发布路径：
+
+- 推送到 `main`：自动构建 signed `release APK`，更新滚动 Release：`main-latest`
+
+该流程要求以下仓库 Secrets：
 
 | Secret | 说明 |
 | --- | --- |
@@ -39,6 +43,13 @@ JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ./gradl
 ```bash
 base64 -i protato-release.jks
 ```
+
+`main` 自动发布会上传两类产物：
+
+- `protato-main-latest-release.apk`
+- `protato-main-latest-source.zip`
+
+并根据本次 push 的 commit 列表自动生成更新说明。
 
 ## 目录结构
 
